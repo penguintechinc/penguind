@@ -37,7 +37,7 @@ jobs:
     env:
       PENGUIN_INTEGRATION: "1"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: protoc
         # protobuf-compiler alone is not enough: libprotobuf-dev supplies the
         # well-known types (google/protobuf/empty.proto) that the vendored
