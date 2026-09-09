@@ -139,7 +139,7 @@ sha2 = "0.10"
 # WebSocket client for obs-adapter's outbound integration. Default features OFF
 # to avoid pulling in rustls/ring (loopback-only connection, plaintext ws://,
 # so no TLS needed). "connect" feature enables connect_async for client connections.
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 # Async stream utilities for obs-adapter's WebSocket message loop (StreamExt trait).
 futures-util = "0.3"
 # URL parser for the obs-adapter's loopback-only guard. A substring match on the
