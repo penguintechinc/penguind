@@ -61,11 +61,27 @@ async fn with_timeout<T>(
     }
 }
 
+/// True for exactly `pdcli --version` or `pdcli -V` — checked against the
+/// raw args before the daemon is dialed or clap parses anything, mirroring
+/// `penguind`'s `is_version_request` (`bins/penguind/src/main.rs`) so all
+/// three binaries answer the flag instantly and identically. The `version`
+/// *subcommand* is untouched: it additionally reports the daemon's version
+/// and requires a live connection, so it stays on the normal dial-then-
+/// dispatch path in [`run`].
+fn is_version_flag(args: &[String]) -> bool {
+    args.len() == 1 && (args[0] == "--version" || args[0] == "-V")
+}
+
 /// Runs the CLI end to end: resolve the socket path, dial the daemon (best
 /// effort — see [`dial`]), build the command tree (static verbs always,
 /// dynamic module subtrees only if the daemon answered), parse `args`
 /// against it, and dispatch to whichever verb or module command matched.
 pub async fn run(args: Vec<String>) -> ExitCode {
+    if is_version_flag(&args[1..]) {
+        println!("{LOCAL_VERSION}");
+        return ExitCode::SUCCESS;
+    }
+
     let socket_path = penguin_cli_core::socket::extract_socket_override(&args[1..])
         .unwrap_or_else(|| penguin_cli_core::socket::DEFAULT_SOCKET_PATH.to_string());
 
@@ -553,5 +569,21 @@ async fn cmd_dispatch(
                 return ExitCode::FAILURE;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_flag_matches_both_spellings_and_nothing_else() {
+        let owned = |s: &str| s.to_string();
+        assert!(is_version_flag(&[owned("--version")]));
+        assert!(is_version_flag(&[owned("-V")]));
+        assert!(!is_version_flag(&[]));
+        assert!(!is_version_flag(&[owned("version")]));
+        assert!(!is_version_flag(&[owned("--version"), owned("extra")]));
+        assert!(!is_version_flag(&[owned("--socket"), owned("/tmp/x")]));
     }
 }
