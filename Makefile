@@ -131,14 +131,24 @@ test-security: tools ## Supply-chain and advisory scans
 	$(CARGO) deny check
 	$(CARGO) audit
 
-smoke-test: build ## Build, then check each binary answers --version
-	@for bin in penguind pdcli penguin-tray; do \
-		if [ -x target/debug/$$bin ]; then \
-			echo "smoke: $$bin"; target/debug/$$bin --version >/dev/null || exit 1; \
-		else \
-			echo "smoke: $$bin not built yet, skipping"; \
+smoke-test: SHELL := bash
+smoke-test: build ## Build, then check each binary answers --version (fails, never skips, on a missing/broken binary)
+	@set -euo pipefail; \
+	target_dir="$$($(CARGO) metadata --format-version 1 --no-deps | jq -r .target_directory)"; \
+	count=0; \
+	for bin in penguind pdcli penguin-tray; do \
+		path="$$target_dir/debug/$$bin"; \
+		if [ ! -x "$$path" ]; then \
+			echo "smoke: FAIL $$bin not built at $$path" >&2; exit 1; \
 		fi; \
-	done
+		"$$path" --version >/dev/null; \
+		echo "smoke: $$bin ok"; \
+		count=$$((count + 1)); \
+	done; \
+	if [ "$$count" -eq 0 ]; then \
+		echo "smoke: FAIL zero binaries examined" >&2; exit 1; \
+	fi; \
+	echo "smoke: $$count/3 binaries verified"
 
 proto: ## Regenerate protobuf bindings (build.rs does this; forces a rebuild)
 	$(CARGO) clean -p penguin-proto
