@@ -13,9 +13,9 @@
   "dependencies": {
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-router-dom": "7.0.1",
+    "react-router-dom": "7.18.4",
     "@tauri-apps/api": "2.11.1",
-    "axios": "1.7.7"
+    "axios": "1.20.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.1",
@@ -27,7 +27,10 @@
     "@vitejs/plugin-react": "4.3.4",
     "eslint": "8.57.1",
     "typescript": "5.7.3",
-    "vite": "6.2.0",
-    "vitest": "3.2.7"
+    "vite": "6.4.3",
+    "vitest": "4.1.11"
+  },
+  "overrides": {
+    "js-yaml": "4.3.2"
   }
 }
