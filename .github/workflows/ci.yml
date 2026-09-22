@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:1.97-bookworm
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: protoc
         # tonic-prost-build (penguin-proto) shells out to protoc at build time;
         # the base rust image ships neither it nor the well-known types.
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:1.97-bookworm
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: cargo-deny (licenses, bans, sources, advisories)
         run: |
           cargo install cargo-deny --locked
