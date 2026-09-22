@@ -131,7 +131,7 @@ rcgen = { version = "0.14", default-features = false, features = [
     "pem",
     "aws_lc_rs",
 ] }
-base64 = "0.22"
+base64 = "0.23"
 # SHA256 hashing for obs-websocket v5 auth handshake. Pure Rust, no C dependency.
 # Used only by penguin-module-waddlebot's obs-adapter for the initial auth challenge,
 # not in any per-packet hot path.
