@@ -4,20 +4,20 @@
 [advisories]
 # Fail on any known RustSec advisory (the cargo-audit equivalent gate).
 yanked = "deny"
-# Transitive via Linux system-tray GTK3 dependency chain (penguin-tray); unmaintained crates,
-# not active exploitable CVEs. Tracked for replacement separately (task #60).
+# Unmaintained-crate advisories, not active exploitable CVEs. Each entry below still
+# matches a real transitive dep as of this writing — verify with `cargo tree -i <crate>
+# --target all` before removing.
+#   - RUSTSEC-2024-0370 (proc-macro-error) + RUSTSEC-2024-0384 (instant) — macOS/Windows-only
+#     tray backend (tray-icon/tao/muda -> gtk 0.18 -> glib -> glib-macros -> proc-macro-error;
+#     tao -> instant), gated via `cfg(any(target_os = "macos", target_os = "windows"))` in
+#     bins/penguin-tray/Cargo.toml. Linux tray uses ksni (D-Bus StatusNotifierItem, GTK-free) and
+#     never pulls this chain — only visible with `--target all`, which unions every platform.
+#   - RUSTSEC-2024-0436 (paste) — cross-platform, via netlink-packet-core ->
+#     defguard_wireguard_rs -> penguin-module-tobogganing (WireGuard networking module);
+#     unrelated to the tray/GTK chain above.
 ignore = [
     "RUSTSEC-2024-0370",
     "RUSTSEC-2024-0384",
-    "RUSTSEC-2024-0411",
-    "RUSTSEC-2024-0412",
-    "RUSTSEC-2024-0413",
-    "RUSTSEC-2024-0414",
-    "RUSTSEC-2024-0415",
-    "RUSTSEC-2024-0416",
-    "RUSTSEC-2024-0418",
-    "RUSTSEC-2024-0419",
-    "RUSTSEC-2024-0420",
     "RUSTSEC-2024-0436",
 ]
 

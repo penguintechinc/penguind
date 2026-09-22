@@ -16,14 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:1.97-bookworm
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: protoc
         # tonic-prost-build (penguin-proto) shells out to protoc at build time;
         # the base rust image ships neither it nor the well-known types.
         # libprotobuf-dev provides google/protobuf/*.proto, which the vendored
         # go-plugin grpc_stdio.proto imports — protobuf-compiler alone is not
         # enough and fails with a confusing "File not found" on that import.
-        run: apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+        # jq is bundled here too: make smoke-test's `cargo metadata | jq` needs
+        # it and rust:1.97-bookworm doesn't ship it either.
+        run: apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev jq
       - name: components
         run: rustup component add rustfmt clippy
       - name: fmt
@@ -34,12 +36,16 @@ jobs:
         run: cargo build --workspace --locked
       - name: test
         run: cargo test --workspace --locked
+      - name: smoke-test
+        # Reuses this job's build (smoke-test depends on `build`); a separate
+        # job would rebuild the whole workspace from scratch for no benefit.
+        run: make smoke-test
 
   supply-chain:
     runs-on: ubuntu-latest
     container: rust:1.97-bookworm
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: cargo-deny (licenses, bans, sources, advisories)
         run: |
           cargo install cargo-deny --locked
