@@ -65,6 +65,14 @@ const STABILITY_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// `Options.RefreshInterval` (`go-client/internal/licensing/client.go`).
 const LICENSE_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// The PostHog feature flag gating OTLP emission (see `critical-rules.md`
+/// Observability + Feature Flags & License Tiers). Resolved through the same
+/// [`LicenseChecker`] every other flag/entitlement check in this daemon uses
+/// — default OFF (an unset/never-fetched flag reads `false`), with the same
+/// last-known-cache graceful degradation the license client already
+/// implements for every other flag.
+const OTEL_TELEMETRY_FLAG: &str = "penguind.otel-telemetry";
+
 /// The GitHub repository self-updates are fetched from — matches
 /// `go-client/.goreleaser.yaml`'s `release.github.{owner,name}`.
 const RELEASE_REPO: &str = "penguintechinc/penguin";
@@ -194,13 +202,50 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     // dropping it (on any return path) releases the lock.
     let _lock_guard = lock::acquire(&args.state_dir)?;
 
+    // Real M4 license client: license.penguintech.io with an offline cache
+    // under `<state_dir>/license`. `LICENSE_KEY` matches the env var Go
+    // reads in `cmd/penguind/service.go`. A missing/empty key or an
+    // unreachable server both degrade gracefully — see `LicenseClient`'s own
+    // doc — rather than stopping the daemon from starting.
+    //
+    // Constructed ahead of telemetry (moved earlier than the brief's literal
+    // step order) so its `feature_enabled` cache — empty on a fresh daemon,
+    // which reads as "off" per `LicenseChecker`'s own contract — can gate the
+    // OTel pipeline below before the tracing subscriber is installed. A
+    // fresh install therefore starts with OTLP export off, exactly matching
+    // "default OFF until validated".
+    let license_client = Arc::new(LicenseClient::new(LicenseClientOptions {
+        license_key: env::var("LICENSE_KEY").unwrap_or_default(),
+        product: String::new(),
+        base_url: String::new(),
+        cache_dir: Some(args.state_dir.join("license")),
+    }));
+    let license_refresh = license_client.spawn_background_refresh(LICENSE_REFRESH_INTERVAL);
+    let otel_enabled = license_client.feature_enabled(OTEL_TELEMETRY_FLAG);
+    let license: Arc<dyn LicenseChecker> = license_client;
+
+    // `otel::init` never panics and never blocks: disabled or a malformed
+    // `OTEL_EXPORTER_OTLP_ENDPOINT` both simply yield `None`, logged at warn
+    // once the subscriber below exists — an unreachable-but-valid endpoint
+    // builds fine and only fails silently at flush time (dead-exporter
+    // safety). Timed so the daemon's own startup-latency histogram below
+    // reflects the real cost of standing up telemetry, OTel included.
+    let telemetry_init_started = std::time::Instant::now();
+    let otel_pipeline = penguin_telemetry::otel::init(otel_enabled);
+
     // The LogRing must exist before installing tracing (its layer needs a
     // handle to append into), so this precedes `Telemetry::new` — the one
     // step reordered from the brief's literal list, since EventBroker has
     // no such dependency and can stay wherever.
     let logs = Arc::new(LogRing::new(LOG_RING_CAPACITY));
-    logging::install(logs.clone(), &daemon_cfg.log_level);
+    logging::install(logs.clone(), &daemon_cfg.log_level, otel_pipeline.as_ref());
     let telemetry = Arc::new(Telemetry::new(&daemon_cfg.log_level)?);
+    let telemetry_init_duration = telemetry.duration_histogram(
+        "penguind_telemetry_init_duration_seconds",
+        "Time to initialize the daemon's logging, metrics, and (if enabled) OTel pipeline.",
+        otel_pipeline.as_ref(),
+    )?;
+    telemetry_init_duration.record(telemetry_init_started.elapsed().as_secs_f64());
 
     let broker = Arc::new(EventBroker::new(EVENT_BROKER_CAPACITY));
     let events: Arc<dyn EventSink> = broker.clone();
@@ -219,20 +264,6 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
             file_dir: args.state_dir.join("secrets"),
         },
     })?);
-
-    // Real M4 license client: license.penguintech.io with an offline cache
-    // under `<state_dir>/license`. `LICENSE_KEY` matches the env var Go
-    // reads in `cmd/penguind/service.go`. A missing/empty key or an
-    // unreachable server both degrade gracefully — see `LicenseClient`'s own
-    // doc — rather than stopping the daemon from starting.
-    let license_client = Arc::new(LicenseClient::new(LicenseClientOptions {
-        license_key: env::var("LICENSE_KEY").unwrap_or_default(),
-        product: String::new(),
-        base_url: String::new(),
-        cache_dir: Some(args.state_dir.join("license")),
-    }));
-    let license_refresh = license_client.spawn_background_refresh(LICENSE_REFRESH_INTERVAL);
-    let license: Arc<dyn LicenseChecker> = license_client;
 
     // Per-module secret isolation is part of DaemonHostFactory's own
     // contract (see `penguin_daemon::host::SecretStoreProvider`):
@@ -346,6 +377,12 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     tracing::info!("shutting down");
     supervisor.shutdown().await;
     license_refresh.stop().await;
+    // Flush any buffered spans/logs/metrics before the process exits. Never
+    // blocks indefinitely (the SDK's own shutdown timeout bounds this) and
+    // never panics — see `OtelPipeline::shutdown`'s own doc.
+    if let Some(pipeline) = &otel_pipeline {
+        pipeline.shutdown();
+    }
     let _ = std::fs::remove_file(&daemon_cfg.socket_path);
 
     serve_result.map_err(DaemonBinError::Serve)

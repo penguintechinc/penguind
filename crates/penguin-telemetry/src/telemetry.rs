@@ -13,7 +13,9 @@ use std::sync::Arc;
 use penguin_sdk::{Logger, Metrics, MetricsError};
 use tracing::level_filters::LevelFilter;
 
+use crate::duration::DurationHistogram;
 use crate::logger::TracingLogger;
+use crate::otel::OtelPipeline;
 
 /// A telemetry setup failure (only an invalid log level or a collector that
 /// fails to register).
@@ -57,6 +59,23 @@ impl Telemetry {
     /// The shared registry, for the daemon's `/metrics` scrape endpoint.
     pub fn registry(&self) -> &prometheus::Registry {
         &self.registry
+    }
+
+    /// Builds a named duration/latency histogram, registered into the shared
+    /// prometheus registry and — when `otel` is `Some` (the
+    /// `penguind.otel-telemetry` flag is on) — also backed by an OTel
+    /// histogram instrument, so one `record` call feeds both the `/metrics`
+    /// scrape surface and the OTLP metrics pipeline. `name` must be unique
+    /// within this `Telemetry`'s registry; a duplicate is a [`TelemetryError`],
+    /// matching [`Telemetry::module_registerer`]'s duplicate-registration
+    /// behavior.
+    pub fn duration_histogram(
+        &self,
+        name: &str,
+        help: &str,
+        otel: Option<&OtelPipeline>,
+    ) -> Result<DurationHistogram, TelemetryError> {
+        DurationHistogram::new(&self.registry, name, help, otel)
     }
 }
 
