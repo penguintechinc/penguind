@@ -7,10 +7,12 @@ updates:
   # Rust workspace dependencies.
   - package-ecosystem: "cargo"
     directory: "/"
+    target-branch: "release/v0.1.X"
     schedule:
       interval: "weekly"
   # Keep pinned GitHub Actions commit SHAs current.
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "release/v0.1.X"
     schedule:
       interval: "weekly"
