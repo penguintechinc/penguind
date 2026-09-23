@@ -270,6 +270,44 @@ prometheus = { version = "0.14", features = ["process"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "json", "env-filter"] }
 
+# OpenTelemetry (OTLP) emission: logs, metrics, and traces alongside the
+# existing tracing/prometheus stack (penguin-telemetry::otel is additive, not
+# a replacement — see critical-rules.md Observability). Pinned exactly.
+# opentelemetry-otlp 0.33's grpc-tonic path resolves to our pinned tonic/prost
+# majors (tonic ^0.14.1, prost ^0.14), so this adds no second tonic/prost
+# version to the graph. Feature selection is deliberate: no
+# reqwest-blocking-client (a blocking HTTP client would stall the tokio
+# runtime on flush); tls-aws-lc + tls-webpki-roots keep both the tonic and
+# reqwest exporter paths on the same aws-lc-rs crypto provider + webpki-roots
+# trust store already used elsewhere in this workspace (penguin-licensing),
+# so `cargo tree -i ring` stays empty.
+opentelemetry = "=0.33.0"
+opentelemetry_sdk = { version = "=0.33.0", default-features = false, features = [
+    "rt-tokio",
+    "trace",
+    "metrics",
+    "logs",
+] }
+opentelemetry-otlp = { version = "=0.33.0", default-features = false, features = [
+    "grpc-tonic",
+    "http-proto",
+    "reqwest-client",
+    "reqwest-rustls",
+    "trace",
+    "metrics",
+    "logs",
+    "internal-logs",
+    "tls-aws-lc",
+    "tls-webpki-roots",
+] }
+# Feeds tracing spans into the OTel traces pipeline as the exporter's tracer.
+tracing-opentelemetry = "=0.34.0"
+# Bridges tracing::Event records (our existing tracing::info!/warn!/etc. call
+# sites) into OTel LogRecords, so the OTel logs pipeline needs no separate
+# logging call convention — the same events that already reach stdout/the
+# LogRing also reach OTLP when the pipeline is enabled.
+opentelemetry-appender-tracing = "=0.33.0"
+
 # Config store: YAML parse + JSON-Schema validation. serde-norway is the
 # maintained fork of the archived serde_yaml; jsonschema is pinned exactly
 # because cross-engine verdict parity with the Go validator is a CI gate.

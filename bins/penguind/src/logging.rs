@@ -7,13 +7,17 @@
 //! subscriber too, but only the *first* `set_global_default` call in a
 //! process wins — every later attempt is silently ignored. [`install`] must
 //! therefore run before `Telemetry::new`, so this combined subscriber (JSON
-//! stdout + the ring layer) is the one that actually wins the race;
-//! `Telemetry::new`'s own attempt then no-ops, while its non-subscriber work
-//! (building the prometheus registry) is unaffected.
+//! stdout + the ring layer + the OTel layer, when enabled) is the one that
+//! actually wins the race; `Telemetry::new`'s own attempt then no-ops, while
+//! its non-subscriber work (building the prometheus registry) is unaffected.
+//! This is also why the OTel trace/log layer is threaded in *here* rather
+//! than inside `penguin_telemetry::Telemetry` itself — it has to be part of
+//! the subscriber that wins the race, not a later, discarded one.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use penguin_telemetry::OtelPipeline;
 use tracing::field::{Field, Visit};
 use tracing::level_filters::LevelFilter;
 use tracing::{Event, Subscriber};
@@ -27,17 +31,21 @@ use penguin_daemon::logring::{LogLine, LogRing};
 /// output at `level` (falling back to `info` for an unrecognised value —
 /// `penguin_telemetry::Telemetry::new`, called right after this, is the
 /// authoritative validator and returns a real error for a genuinely bad
-/// level) plus a layer that appends every event to `logs` under the
-/// daemon's own log source (the empty string).
-pub fn install(logs: Arc<LogRing>, level: &str) {
+/// level), a layer that appends every event to `logs` under the daemon's own
+/// log source (the empty string), and — when `otel` is `Some` (the
+/// `penguind.otel-telemetry` flag resolved on) — the OTLP trace/log export
+/// layer from [`penguin_telemetry::otel`].
+pub fn install(logs: Arc<LogRing>, level: &str, otel: Option<&OtelPipeline>) {
     let filter = parse_level_filter(level);
     let fmt_layer = tracing_subscriber::fmt::layer().json();
     let ring_layer = LogRingLayer { logs };
+    let otel_layer = otel.map(OtelPipeline::tracing_layer);
 
     let subscriber = tracing_subscriber::registry()
         .with(filter)
         .with(fmt_layer)
-        .with(ring_layer);
+        .with(ring_layer)
+        .with(otel_layer);
     // A second install in the same process (e.g. a future call site, or a
     // test) is a no-op — there is nothing actionable to do about it here.
     let _ = subscriber.try_init();
