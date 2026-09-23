@@ -129,9 +129,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Builds the AEAD cipher for a given master key.
-fn cipher_for(master_key: &MasterKey) -> XChaCha20Poly1305 {
-    let key = Key::from_slice(master_key.as_bytes());
-    XChaCha20Poly1305::new(key)
+fn cipher_for(master_key: &MasterKey) -> Result<XChaCha20Poly1305, SecretError> {
+    let key = <&Key>::try_from(master_key.as_bytes().as_slice()).map_err(|_| {
+        SecretError::Other("master key has invalid length for XChaCha20Poly1305".to_string())
+    })?;
+    Ok(XChaCha20Poly1305::new(key))
 }
 
 /// Encrypts `plaintext` under a fresh random 24-byte nonce, with `aad_key`
@@ -144,13 +146,14 @@ fn encrypt_record(
 ) -> Result<Vec<u8>, SecretError> {
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::rng().fill_bytes(&mut nonce_bytes);
-    let nonce = XNonce::from_slice(&nonce_bytes);
+    let nonce = <&XNonce>::try_from(nonce_bytes.as_slice())
+        .map_err(|_| SecretError::Other("generated nonce has unexpected length".to_string()))?;
 
     let payload = Payload {
         msg: plaintext,
         aad: aad_key.as_bytes(),
     };
-    let ciphertext = cipher_for(master_key)
+    let ciphertext = cipher_for(master_key)?
         .encrypt(nonce, payload)
         .map_err(|_| SecretError::Other("failed to encrypt secret".to_string()))?;
 
@@ -174,13 +177,14 @@ fn decrypt_record(
         return Err(SecretError::Other("secret record is truncated".to_string()));
     }
     let (nonce_bytes, ciphertext) = record.split_at(NONCE_LEN);
-    let nonce = XNonce::from_slice(nonce_bytes);
+    let nonce = <&XNonce>::try_from(nonce_bytes)
+        .map_err(|_| SecretError::Other("secret record nonce has unexpected length".to_string()))?;
 
     let payload = Payload {
         msg: ciphertext,
         aad: aad_key.as_bytes(),
     };
-    cipher_for(master_key).decrypt(nonce, payload).map_err(|_| {
+    cipher_for(master_key)?.decrypt(nonce, payload).map_err(|_| {
         SecretError::Other(
             "failed to decrypt secret (tampered ciphertext, wrong key, or record moved to a different key)"
                 .to_string(),
