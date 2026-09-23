@@ -383,8 +383,14 @@ impl OtelPipeline {
 
     /// Flushes and shuts down all three providers. Never panics: a provider
     /// that fails to shut down cleanly (e.g. the collector is still
-    /// unreachable) is logged at `warn` and otherwise ignored — telemetry
-    /// teardown must never block or fail the daemon's own shutdown.
+    /// unreachable) is logged at `warn` and otherwise ignored.
+    ///
+    /// Synchronous and potentially slow: each provider's `shutdown()` can
+    /// block for up to [`EXPORT_TIMEOUT`] if the configured collector is
+    /// black-holed (up to ~30s total across all three run sequentially, as
+    /// they are here). Callers on a Tokio worker thread MUST NOT call this
+    /// directly — use [`shutdown_with_timeout`](Self::shutdown_with_timeout)
+    /// instead, which moves this call off the async runtime and bounds it.
     pub fn shutdown(&self) {
         if let Err(err) = self.tracer_provider.shutdown() {
             tracing::warn!(error = %err, "otel tracer provider shutdown failed");
@@ -396,7 +402,51 @@ impl OtelPipeline {
             tracing::warn!(error = %err, "otel meter provider shutdown failed");
         }
     }
+
+    /// Async-safe wrapper around [`shutdown`](Self::shutdown) — the daemon's
+    /// actual shutdown path (see `daemon_main.rs`) calls this, never
+    /// `shutdown()` directly. Runs the blocking provider-shutdown calls on
+    /// the blocking thread pool via `spawn_blocking` so a Tokio worker is
+    /// never occupied by them, and races the result against `budget` so a
+    /// black-holed collector (up to ~30s worst case across all three
+    /// providers' [`EXPORT_TIMEOUT`]) cannot stall the caller beyond it.
+    ///
+    /// A timed-out or panicked shutdown is logged at `warn` and otherwise
+    /// swallowed — never propagated as an error, never a panic. Buffered
+    /// telemetry may be lost in that case, which is the same acceptable
+    /// tradeoff `shutdown()`'s own doc already describes for a bare `drop`.
+    /// Consumes `self`: shutdown is a one-shot, terminal operation.
+    pub async fn shutdown_with_timeout(self, budget: Duration) {
+        run_with_budget(budget, move || self.shutdown()).await;
+    }
 }
+
+/// Runs blocking closure `f` on the blocking thread pool, giving up after
+/// `budget` if it hasn't returned by then. Split out from
+/// [`OtelPipeline::shutdown_with_timeout`] so the timeout-enforcement
+/// mechanism itself can be unit tested against an artificially slow closure,
+/// without needing a real multi-second network stall in the test suite.
+async fn run_with_budget(budget: Duration, f: impl FnOnce() + Send + 'static) {
+    match tokio::time::timeout(budget, tokio::task::spawn_blocking(f)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(join_err)) => {
+            tracing::warn!(error = %join_err, "otel shutdown task panicked");
+        }
+        Err(_) => {
+            tracing::warn!(
+                budget_secs = budget.as_secs(),
+                "otel shutdown exceeded its budget; abandoning flush (buffered telemetry may be lost)"
+            );
+        }
+    }
+}
+
+/// Overall wall-clock budget for [`OtelPipeline::shutdown_with_timeout`] —
+/// bounds the combined flush of all three providers well under the
+/// worst-case ~30s (`EXPORT_TIMEOUT * 3` run sequentially) a black-holed
+/// collector could otherwise cause, while still giving a genuinely slow but
+/// live collector a real chance to drain the buffered queue.
+pub const OTEL_SHUTDOWN_BUDGET: Duration = Duration::from_secs(8);
 
 /// The single entry point: builds an OTLP pipeline from the standard
 /// `OTEL_*` env vars if `enabled` (the resolved
@@ -554,6 +604,52 @@ mod tests {
         let pipeline =
             OtelPipeline::build(&config).expect("build succeeds for an unreachable endpoint");
         pipeline.shutdown();
+    }
+
+    /// Reviewer finding #7 regression test: `shutdown_with_timeout` is what
+    /// the daemon's real shutdown path calls (never `shutdown()` directly —
+    /// see `daemon_main.rs`), and it must return well within its budget even
+    /// against a genuinely unreachable OTLP endpoint, not silently fall back
+    /// to blocking the calling task for however long the SDK's own
+    /// `EXPORT_TIMEOUT` takes.
+    #[tokio::test]
+    async fn shutdown_with_timeout_returns_promptly_for_an_unreachable_endpoint() {
+        let config = OtelConfig {
+            endpoint: Some("http://127.0.0.1:1".to_string()),
+            protocol: OtelProtocol::Grpc,
+            headers: HashMap::new(),
+            service_name: "penguind-test".to_string(),
+            resource_attributes: vec![],
+        };
+        let pipeline =
+            OtelPipeline::build(&config).expect("build succeeds for an unreachable endpoint");
+
+        let budget = Duration::from_secs(2);
+        let started = std::time::Instant::now();
+        pipeline.shutdown_with_timeout(budget).await;
+        assert!(
+            started.elapsed() < budget,
+            "shutdown_with_timeout took as long as its own budget against a \
+             connection-refused endpoint — the async wrapper isn't short-circuiting"
+        );
+    }
+
+    /// Directly exercises the timeout-enforcement mechanism
+    /// `shutdown_with_timeout` delegates to, using a blocking closure slower
+    /// than its budget. Proves a black-holed collector — which would
+    /// otherwise block the underlying SDK call for the full `EXPORT_TIMEOUT`
+    /// (up to ~30s across all three providers) — cannot stall the caller
+    /// beyond `budget`, without this test itself waiting out a real
+    /// multi-second network timeout.
+    #[tokio::test]
+    async fn run_with_budget_gives_up_on_a_slower_blocking_call() {
+        let budget = Duration::from_millis(50);
+        let started = std::time::Instant::now();
+        run_with_budget(budget, || std::thread::sleep(Duration::from_secs(5))).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "run_with_budget waited for the slow blocking call instead of giving up at budget"
+        );
     }
 
     /// A malformed (not-a-URI) endpoint is the one case that fails at build

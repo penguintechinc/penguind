@@ -377,11 +377,15 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     tracing::info!("shutting down");
     supervisor.shutdown().await;
     license_refresh.stop().await;
-    // Flush any buffered spans/logs/metrics before the process exits. Never
-    // blocks indefinitely (the SDK's own shutdown timeout bounds this) and
-    // never panics — see `OtelPipeline::shutdown`'s own doc.
-    if let Some(pipeline) = &otel_pipeline {
-        pipeline.shutdown();
+    // Flush any buffered spans/logs/metrics before the process exits. Runs
+    // off this async worker and is bounded to `OTEL_SHUTDOWN_BUDGET` total
+    // (not the SDK's own up-to-30s worst case across all three providers) —
+    // see `OtelPipeline::shutdown_with_timeout`'s own doc. A no-op when OTel
+    // was never enabled/initialized.
+    if let Some(pipeline) = otel_pipeline {
+        pipeline
+            .shutdown_with_timeout(penguin_telemetry::otel::OTEL_SHUTDOWN_BUDGET)
+            .await;
     }
     let _ = std::fs::remove_file(&daemon_cfg.socket_path);
 

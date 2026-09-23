@@ -26,6 +26,10 @@ tracing-opentelemetry.workspace = true
 opentelemetry-appender-tracing.workspace = true
 # Builds the OTLP/gRPC exporter's per-request metadata (OTEL_EXPORTER_OTLP_HEADERS).
 tonic.workspace = true
+# `OtelPipeline::shutdown_with_timeout`'s spawn_blocking + timeout wrapper —
+# already resolved workspace-wide with a superset of these features, so this
+# adds no new tokio version/feature combination to the dependency graph.
+tokio.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
