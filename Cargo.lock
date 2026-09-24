@@ -3347,7 +3347,7 @@ dependencies = [
  "base64-url",
  "chrono",
  "futures",
- "getrandom 0.2.17",
+ "getrandom 0.4.3",
  "jsonwebtoken",
  "mlua",
  "nix 0.30.1",
