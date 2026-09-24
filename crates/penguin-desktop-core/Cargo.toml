@@ -32,7 +32,7 @@ jsonwebtoken.workspace = true
 urlencoding.workspace = true
 base64-url = "3"
 subtle = "2"
-getrandom = "0.2"
+getrandom = "0.4"
 futures = "0.3.33"
 uuid = { version = "1", features = ["v4", "serde"] }
 mlua = { version = "0.9", features = ["lua54", "serialize", "vendored"] }
