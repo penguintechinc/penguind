@@ -82,7 +82,7 @@ COVER_IGNORE_UNIT := $(COVER_EXCLUDE_ALWAYS)|$(COVER_EXCLUDE_BOUNDARY)
 COVER_IGNORE_INT := $(COVER_EXCLUDE_ALWAYS)
 
 .PHONY: help setup build test test-unit test-integration test-integration-cover \
-        lint format test-security smoke-test clean proto \
+        lint format test-security smoke-test test-telemetry clean proto \
         pre-commit parity docker-image docker-volumes tools install-hooks verify-hooks
 
 help: ## Show available targets
@@ -149,6 +149,16 @@ smoke-test: build ## Build, then check each binary answers --version (fails, nev
 		echo "smoke: FAIL zero binaries examined" >&2; exit 1; \
 	fi; \
 	echo "smoke: $$count/3 binaries verified"
+
+# Separate from smoke-test deliberately: it needs a real Docker daemon to run
+# the OTLP collector, which CI's `rust` job (container: rust:1.97-bookworm)
+# does not have. A missing docker is a FAIL here, never a silent skip —
+# see critical-rules.md Verification Integrity — so this must stay its own
+# target, run only from a job with Docker (ubuntu-latest, no `container:`).
+test-telemetry: build ## Telemetry Validation gate: real OTLP collector proves logs/metrics/traces reach it, flag-on AND flag-off
+	@command -v docker >/dev/null 2>&1 || { echo "test-telemetry: FAIL docker is required and not available" >&2; exit 1; }
+	./scripts/validate-telemetry.sh --flag-on
+	./scripts/validate-telemetry.sh --flag-off
 
 proto: ## Regenerate protobuf bindings (build.rs does this; forces a rebuild)
 	$(CARGO) clean -p penguin-proto
