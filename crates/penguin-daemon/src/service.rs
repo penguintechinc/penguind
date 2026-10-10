@@ -141,6 +141,14 @@ impl Daemon for DaemonService {
     /// every currently loaded external plugin, so operators can discover
     /// both what is available to load and what external plugin is already
     /// running.
+    ///
+    /// `#[instrument]`: this is real inter-process work (a `pdcli`/desktop
+    /// RPC call crossing the control socket), so it gets a real OTel span
+    /// when the `penguind.otel-telemetry` pipeline is live — see
+    /// `critical-rules.md` Observability, "Traces: span the real work".
+    /// `skip_all` because `Request<_>` carries no `Debug` worth rendering
+    /// into span fields.
+    #[tracing::instrument(skip_all, fields(rpc = "list_modules"))]
     async fn list_modules(
         &self,
         request: Request<pb::ListModulesRequest>,
@@ -211,6 +219,10 @@ impl Daemon for DaemonService {
     /// Returns status (and health) for one module, or every registered
     /// module when `name` is empty — silently skipping any that are not
     /// currently loaded.
+    ///
+    /// `#[instrument]`: see [`DaemonService::list_modules`]'s doc — same
+    /// real-RPC-boundary rationale, same `skip_all` reasoning.
+    #[tracing::instrument(skip_all, fields(rpc = "get_status"))]
     async fn get_status(
         &self,
         request: Request<pb::GetStatusRequest>,
@@ -244,6 +256,13 @@ impl Daemon for DaemonService {
 
     /// Lists every loaded module's command tree, skipping any registered
     /// module that is not currently loaded.
+    ///
+    /// `#[instrument]`: see [`DaemonService::list_modules`]'s doc — same
+    /// real-RPC-boundary rationale, same `skip_all` reasoning. Notably, this
+    /// is the one handler every `pdcli` invocation besides `--version` hits
+    /// first (dynamic command-tree discovery), so it is the daemon's single
+    /// most-exercised span.
+    #[tracing::instrument(skip_all, fields(rpc = "list_commands"))]
     async fn list_commands(
         &self,
         request: Request<pb::ListCommandsRequest>,
