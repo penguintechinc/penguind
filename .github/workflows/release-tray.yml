@@ -129,7 +129,9 @@ jobs:
 
       - name: Stage binary under its release name
         shell: bash
-        run: cp "target/${{ matrix.target }}/release/penguin-tray${{ matrix.exe_ext }}" "${{ steps.version.outputs.asset }}"
+        env:
+          ASSET_NAME: ${{ steps.version.outputs.asset }}
+        run: cp "target/${{ matrix.target }}/release/penguin-tray${{ matrix.exe_ext }}" "$ASSET_NAME"
 
       # Every leg builds its own artifact and there's no per-tag checksums
       # file to aggregate for tray (unlike release.yml's finalize job), so
@@ -161,14 +163,17 @@ jobs:
         shell: bash
         env:
           MINISIGN_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          ASSET_NAME: ${{ steps.version.outputs.asset }}
         run: |
           set -euo pipefail
           umask 077
           printf '%s' "$MINISIGN_KEY" | base64 -d > "$RUNNER_TEMP/minisign.key"
-          minisign -S -s "$RUNNER_TEMP/minisign.key" -m "${{ steps.version.outputs.asset }}" -x "${{ steps.version.outputs.asset }}.minisig"
+          minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$ASSET_NAME" -x "$ASSET_NAME.minisig"
           shred -u "$RUNNER_TEMP/minisign.key" 2>/dev/null || rm -f "$RUNNER_TEMP/minisign.key"
 
       - name: Upload release asset(s)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" "${{ steps.version.outputs.asset }}"* --repo penguintechinc/penguin --clobber
+          TAG_NAME: ${{ github.ref_name }}
+          ASSET_NAME: ${{ steps.version.outputs.asset }}
+        run: gh release upload "$TAG_NAME" "$ASSET_NAME"* --repo penguintechinc/penguind --clobber

@@ -76,9 +76,11 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Build MSI
+        env:
+          MSI_VERSION: ${{ steps.ver.outputs.version }}
         run: >
           wix build packaging/windows/penguind.wxs
-          -d Version=${{ steps.ver.outputs.version }}
+          -d Version=$env:MSI_VERSION
           -b staging -arch x64 -o penguind.msi
 
       # TODO(signing): the MSI is UNSIGNED. Once a PenguinTech Authenticode
@@ -89,4 +91,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release upload "$env:TAG" penguind.msi --repo penguintechinc/penguin --clobber
+        run: gh release upload "$env:TAG" penguind.msi --repo penguintechinc/penguind --clobber

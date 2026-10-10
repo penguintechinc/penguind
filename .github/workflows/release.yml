@@ -168,12 +168,16 @@ jobs:
       - name: Create archive (tar.gz)
         if: matrix.archive_ext == 'tar.gz'
         shell: bash
-        run: tar -czf "${{ steps.asset.outputs.name }}" -C stage penguind pdcli
+        env:
+          ASSET_NAME: ${{ steps.asset.outputs.name }}
+        run: tar -czf "$ASSET_NAME" -C stage penguind pdcli
 
       - name: Create archive (zip)
         if: matrix.archive_ext == 'zip'
         shell: pwsh
-        run: Compress-Archive -Path stage/penguind.exe, stage/pdcli.exe -DestinationPath "${{ steps.asset.outputs.name }}"
+        env:
+          ASSET_NAME: ${{ steps.asset.outputs.name }}
+        run: Compress-Archive -Path stage/penguind.exe, stage/pdcli.exe -DestinationPath "$env:ASSET_NAME"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -313,4 +317,5 @@ jobs:
         working-directory: dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" --repo penguintechinc/penguin --clobber -- *
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release upload "$TAG_NAME" --repo penguintechinc/penguind --clobber -- *
