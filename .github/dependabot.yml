@@ -10,9 +10,27 @@ updates:
     target-branch: "release/v0.1.X"
     schedule:
       interval: "weekly"
+    groups:
+      all-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
   # Keep pinned GitHub Actions commit SHAs current.
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "release/v0.1.X"
     schedule:
       interval: "weekly"
+    groups:
+      all-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
