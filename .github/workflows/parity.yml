@@ -46,11 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: protoc
-        # libprotobuf-dev supplies the well-known types the vendored go-plugin
-        # grpc_stdio.proto imports; protobuf-compiler alone fails that import
-        # (same reason as integration.yml).
-        run: SUDO=$([ "$(id -u)" -eq 0 ] || echo sudo); $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+      - uses: ./.github/actions/setup-protoc
 
       - name: Build the Rust binaries + the raw wire probe
         run: |

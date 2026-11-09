@@ -1,0 +1,34 @@
+name: Setup protoc
+description: >-
+  Install a pinned, sha256-verified protoc from the official protobuf release
+  (no apt, no sudo — works on rootless dal2alpha runners and in containers).
+  The zip's include/ dir replaces libprotobuf-dev's well-known types.
+runs:
+  using: composite
+  steps:
+    - name: Install protoc 36.2
+      shell: bash
+      run: |
+        set -euo pipefail
+        PROTOC_VERSION=36.2
+        case "$(uname -m)" in
+          x86_64)  asset=linux-x86_64; sha=121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278 ;;
+          aarch64) asset=linux-aarch_64; sha=8b8f18bd2b30346efbc698dd5a73dd7c805f3ef8380f6dfc95c768f3f1852f6a ;;
+          *) echo "::error::unsupported arch $(uname -m)"; exit 1 ;;
+        esac
+        dest="${RUNNER_TEMP}/protoc"
+        zip="${RUNNER_TEMP}/protoc-${PROTOC_VERSION}.zip"
+        curl -sSfL -o "$zip" "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${asset}.zip"
+        echo "${sha}  ${zip}" | sha256sum -c -
+        rm -rf "$dest"; mkdir -p "$dest"
+        if command -v unzip >/dev/null 2>&1; then
+          unzip -q "$zip" -d "$dest"
+        else
+          python3 -I -m zipfile -e "$zip" "$dest"
+        fi
+        chmod +x "$dest/bin/protoc"
+        test -f "$dest/include/google/protobuf/empty.proto"
+        echo "$dest/bin" >> "$GITHUB_PATH"
+        echo "PROTOC=$dest/bin/protoc" >> "$GITHUB_ENV"
+        echo "PROTOC_INCLUDE=$dest/include" >> "$GITHUB_ENV"
+        "$dest/bin/protoc" --version
