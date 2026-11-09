@@ -156,7 +156,7 @@ smoke-test: build ## Build, then check each binary answers --version (fails, nev
 # see critical-rules.md Verification Integrity — so this must stay its own
 # target, run only from a job with Docker (ubuntu-latest, no `container:`).
 test-telemetry: build ## Telemetry Validation gate: real OTLP collector proves logs/metrics/traces reach it, flag-on AND flag-off
-	@command -v docker >/dev/null 2>&1 || { echo "test-telemetry: FAIL docker is required and not available" >&2; exit 1; }
+	@[ "$${VALIDATE_TELEMETRY_SINK_MODE:-managed}" != "managed" ] || command -v docker >/dev/null 2>&1 || { echo "test-telemetry: FAIL docker is required and not available" >&2; exit 1; }
 	./scripts/validate-telemetry.sh --flag-on
 	./scripts/validate-telemetry.sh --flag-off
 
