@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
     container:
       image: rust:1.97-bookworm
       # Privileged: root-only tests self-skip when unprivileged, so without this

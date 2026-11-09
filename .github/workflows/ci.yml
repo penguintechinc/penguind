@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
     container: rust:1.97-bookworm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
     # Deliberately NOT `container: rust:1.97-bookworm` — this job needs a
     # real Docker daemon to run the OTLP collector sink, which that
     # container doesn't have. ubuntu-latest hosted runners do.
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust (matches rust-toolchain.toml)
@@ -55,12 +55,12 @@ jobs:
       - name: protoc + jq
         # Same packages the `rust` job's container installs via apt — see
         # that job's `protoc` step for why each one is needed.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev jq
+        run: SUDO=$([ "$(id -u)" -eq 0 ] || echo sudo); $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev jq
       - name: Telemetry Validation gate (real OTLP collector, flag-on + flag-off)
         run: make test-telemetry
 
   supply-chain:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
     container: rust:1.97-bookworm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

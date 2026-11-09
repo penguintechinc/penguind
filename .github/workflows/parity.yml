@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   parity-plain:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -50,7 +50,7 @@ jobs:
         # libprotobuf-dev supplies the well-known types the vendored go-plugin
         # grpc_stdio.proto imports; protobuf-compiler alone fails that import
         # (same reason as integration.yml).
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+        run: SUDO=$([ "$(id -u)" -eq 0 ] || echo sudo); $SUDO apt-get update && $SUDO apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
 
       - name: Build the Rust binaries + the raw wire probe
         run: |
