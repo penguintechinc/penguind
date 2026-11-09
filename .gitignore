@@ -33,3 +33,8 @@ credentials.json
 # sessions; the migration work runs in an isolated worktree here)
 /.worktrees/
 .worktrees/
+
+# Imported per-product client sources staged for consolidation into penguind.
+# Reference material only: never built, never shipped, and removed once the
+# functionality is merged into the agent and feature parity is verified.
+/reference/
