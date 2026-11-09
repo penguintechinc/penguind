@@ -44,3 +44,4 @@ pub mod logring;
 pub mod service;
 pub mod state;
 pub mod supervisor;
+pub mod wasm;

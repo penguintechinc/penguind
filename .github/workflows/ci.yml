@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: cargo-deny (licenses, bans, sources, advisories)
         run: |
-          cargo install cargo-deny --locked
+          cargo install cargo-deny --version 0.20.2 --locked
           cargo deny check
       - name: cargo-audit (RustSec advisories)
         run: |
