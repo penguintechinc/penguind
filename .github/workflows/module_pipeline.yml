@@ -32,6 +32,10 @@ jobs:
           toolchain: '1.97.0'
           targets: wasm32-wasip1
 
+      - name: protoc
+        # penguin-proto's build script needs protoc + well-known types (see ci.yml).
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+
       - name: Build penguin-wasm-host
         shell: bash
         run: |
