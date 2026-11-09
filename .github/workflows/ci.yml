@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   rust:
-    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
+    runs-on: ${{ ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') }}
     container: rust:1.97-bookworm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
     # Deliberately NOT `container: rust:1.97-bookworm` — this job needs a
     # real Docker daemon to run the OTLP collector sink, which that
     # container doesn't have. ubuntu-latest hosted runners do.
-    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
+    runs-on: ${{ ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust (matches rust-toolchain.toml)
@@ -60,7 +60,7 @@ jobs:
         run: make test-telemetry
 
   supply-chain:
-    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main' && !startsWith(github.ref_name, 'release/'))) && fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') || 'ubuntu-latest' }}
+    runs-on: ${{ ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2alpha"]}') }}
     container: rust:1.97-bookworm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
