@@ -26,6 +26,16 @@ agent: POST /api/v1/agent/token   (refresh_token)       → new pair; old refres
 - Refresh reuse → whole chain revoked (compromise signal); agent must re-enroll
 - Tokens in OS keychain/secret store only, never plaintext files
 
+### Credential storage
+
+| Run mode (`PENGUIND_RUN_MODE`) | Preferred store | Notes |
+|---|---|---|
+| `desktop` | OS keychain (`keyring`) | |
+| `daemonset` | Kubernetes Secret, read from `PENGUIND_HUB_TOKEN_FILE` (projected volume, `defaultMode: 0400`) | Rotated tokens written back via the K8s API only when the pod SA may update the Secret; otherwise kept in memory and the agent re-bootstraps after restart. Never written to a file outside the mount; group/world-readable mount refused |
+| `server` (default) | OS keychain | |
+
+**Exception — encrypted-file fallback (any mode):** used only when the preferred store is unavailable. Logs a WARN and sets `penguind_hub_token_store_active{store="encrypted-file"}=1` (gauge carries the active store for every mode).
+
 ## Poll Loop
 
 ```
@@ -51,7 +61,7 @@ every poll_interval_s (default 300) ± 10% jitter:
 5. Hub never signs; a compromised hub can withhold or roll back, never inject code
 6. Yanked versions disappear from the bundle; agent unloads them on next apply
 
-Rollback protection: agent refuses a version lower than the highest it has verified for the same id unless the bundle drops the id entirely (then unload).
+Rollback protection: agent refuses a version lower than the highest it has verified for the same id. The monotonic high-water mark persists (`hub-highwater.json`), survives the hub dropping the id (module unloaded, mark kept) and revocation wipes; only an explicit local operator reset (`HubClient::reset_high_water`) lowers it.
 
 ## Effective Config & Limits Clamp
 

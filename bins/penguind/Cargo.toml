@@ -15,6 +15,7 @@ workspace = true
 # transport, a config directory, and the process lifecycle. penguin-ipc lives
 # here rather than in the library so the library stays testable without sockets.
 penguin-daemon.workspace = true
+penguin-hub-client.workspace = true
 penguin-ipc.workspace = true
 penguin-telemetry.workspace = true
 penguin-sdk.workspace = true

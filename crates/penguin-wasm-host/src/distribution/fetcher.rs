@@ -75,7 +75,8 @@ pub trait Resolver: Send + Sync {
     async fn resolve(&self, host: &str) -> std::io::Result<Vec<IpAddr>>;
 }
 
-struct SystemResolver;
+/// Resolver backed by the OS (`getaddrinfo`); shared with the hub fetcher.
+pub(super) struct SystemResolver;
 
 #[async_trait]
 impl Resolver for SystemResolver {
