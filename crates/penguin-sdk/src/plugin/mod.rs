@@ -36,10 +36,12 @@
 mod broker;
 mod error;
 mod handshake;
+mod host_capability;
 mod hostservices;
 mod mtls;
 mod serve;
 mod services;
 mod tls_incoming;
 
+pub use host_capability::HostCapability;
 pub use serve::serve;

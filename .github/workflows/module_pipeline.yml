@@ -1,0 +1,56 @@
+# WASM module pipeline: builds and tests the wasm tool-call host
+# (crates/penguin-wasm-host) and checks RustSec advisories. The wasm32-wasip1
+# target is installed so host/module builds that target WASI resolve. Actions
+# pinned to commit SHAs; no github.event.* is interpolated into any run: step.
+name: module-pipeline
+
+on:
+  pull_request:
+    paths:
+      - "crates/penguin-wasm-host/**"
+      - "crates/penguin-sdk/**"
+      - "modules/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/module_pipeline.yml"
+  push:
+    branches: [main, "release/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  wasm-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (matches rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: '1.97.0'
+          targets: wasm32-wasip1
+
+      - name: protoc
+        # penguin-proto's build script needs protoc + well-known types (see ci.yml).
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+
+      - name: Build penguin-wasm-host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p penguin-wasm-host --locked
+
+      - name: Test penguin-wasm-host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p penguin-wasm-host --locked
+
+      - name: cargo-deny advisories
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny check advisories

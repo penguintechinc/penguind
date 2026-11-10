@@ -85,7 +85,9 @@ impl LinuxTunDevice {
     pub async fn new(name: &str) -> Result<Self, WgBackendError> {
         let tun_fd = TunFd::open(name)?;
         let name_str = name.to_string();
-        let fd = tokio::io::unix::AsyncFd::new(tun_fd)
+        // SAFETY: TunFd exclusively owns a valid open TUN fd for its whole lifetime and
+        // as_raw_fd() always returns that same fd (tokio >=1.54 AsyncFd::register contract).
+        let fd = unsafe { tokio::io::unix::AsyncFd::register(tun_fd) }
             .map_err(|e| WgBackendError::Interface(format!("AsyncFd wrapping failed: {e}")))?;
         Ok(LinuxTunDevice { fd, name: name_str })
     }
