@@ -23,8 +23,8 @@ use wasmtime::{Caller, Config, Engine, Extern, Linker, Module, Store, Trap};
 use crate::error::WasmHostError;
 use crate::tools::ToolRegistry;
 
-pub use limits::ModuleLimits;
 use limits::StoreLimiter;
+pub use limits::{DnsAllowlist, ModuleLimits};
 
 /// PostHog flag gating the whole WASM module subsystem (unseen = OFF).
 pub const WASM_MODULES_FLAG: &str = "penguind.wasm-modules";
@@ -52,6 +52,7 @@ pub struct RunOutcome {
 pub(crate) struct HostState {
     registry: Arc<ToolRegistry>,
     allowed: Arc<HashSet<String>>,
+    allowed_dns: Arc<DnsAllowlist>,
     limiter: StoreLimiter,
     calls: Vec<CallRecord>,
     attempts: u64,
@@ -142,6 +143,7 @@ impl WasmRuntime {
         let state = HostState {
             registry: self.registry.clone(),
             allowed: Arc::new(limits.allowed_tools.clone()),
+            allowed_dns: Arc::new(limits.allowed_dns.clone()),
             limiter: StoreLimiter::new(limits.max_memory_bytes),
             calls: Vec::new(),
             attempts: 0,
@@ -260,6 +262,9 @@ impl HostState {
     }
     pub(crate) fn allowed(&self) -> Arc<HashSet<String>> {
         self.allowed.clone()
+    }
+    pub(crate) fn allowed_dns(&self) -> Arc<DnsAllowlist> {
+        self.allowed_dns.clone()
     }
     /// Appends a call record; the vector can never outgrow the call budget.
     pub(crate) fn record(&mut self, tool: String, code: i32) {

@@ -121,7 +121,18 @@ pub(crate) async fn call_tool(
 
     let registry = caller.data().registry();
     let allowed = caller.data().allowed();
+    let allowed_dns = caller.data().allowed_dns();
     let outcome = match serde_json::from_slice::<Value>(&args_raw) {
+        // DNS names are a per-module grant, checked before any request.
+        Ok(args)
+            if name == "doh_query"
+                && allowed.contains(&name)
+                && !allowed_dns.permits(args["name"].as_str().unwrap_or("")) =>
+        {
+            Err(ToolError::Forbidden(
+                "doh_query: name not in module DNS allowlist".into(),
+            ))
+        }
         Ok(args) => {
             registry
                 .call_scoped(&name, args, Some(allowed.as_ref()))

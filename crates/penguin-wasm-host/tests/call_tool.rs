@@ -74,7 +74,7 @@ async fn declared_but_unimplemented_tool_is_not_a_silent_success() {
     let logger = Arc::new(RecordingLogger::default());
     let wasm = caller_wasm("doh_query", r#"{"name":"a.test","query_type":"A"}"#, 4096);
     let out = runtime(&logger)
-        .run(&wasm, open_limits())
+        .run(&wasm, open_limits().allowing_dns(["a.test"]))
         .await
         .expect("run");
     assert_eq!(out.exit_code, abi::E_NOT_IMPLEMENTED);
@@ -519,7 +519,7 @@ async fn real_executors_metrics_publish_and_doh_not_implemented_gap_closed() {
         module: "t",
         logger: Arc::new(RecordingLogger::default()),
         config_yaml: b"",
-        prometheus: &prom,
+        gauges: &penguin_wasm_host::executors::ModuleGauges::new(prom.clone()),
         doh_endpoint: Some("http://127.0.0.1:1/dns-query"),
         metrics: None,
     })
@@ -531,10 +531,67 @@ async fn real_executors_metrics_publish_and_doh_not_implemented_gap_closed() {
     assert!(
         prom.gather()
             .iter()
-            .any(|f| f.name() == "penguind_module_t_g")
+            .any(|f| f.name() == "penguind_module_t__g")
     );
     // DoH is wired: a dead resolver is a Failed (-3), no longer NotImplemented (-4).
     let w = caller_wasm("doh_query", r#"{"name":"a.test","query_type":"A"}"#, 256);
-    let out = rt.run(&w, open_limits()).await.expect("run");
+    let out = rt
+        .run(&w, open_limits().allowing_dns(["a.test"]))
+        .await
+        .expect("run");
     assert_eq!(out.exit_code, abi::E_FAILED);
+}
+
+/// Runs one `doh_query` for `name` against a loopback listener and returns
+/// the exit code plus whether the resolver saw any connection.
+async fn doh_attempt(name: &str, limits: ModuleLimits) -> (i32, bool) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let endpoint = format!(
+        "http://127.0.0.1:{}/dns-query",
+        listener.local_addr().expect("addr").port()
+    );
+    let gauges = penguin_wasm_host::executors::ModuleGauges::new(prometheus::Registry::new());
+    let reg = penguin_wasm_host::build_module_registry(penguin_wasm_host::ModuleToolContext {
+        module: "dns",
+        logger: Arc::new(RecordingLogger::default()),
+        config_yaml: b"",
+        gauges: &gauges,
+        doh_endpoint: Some(&endpoint),
+        metrics: None,
+    })
+    .expect("registry");
+    let rt = WasmRuntime::new(Arc::new(reg), Flags::on()).expect("runtime");
+    let args = format!(r#"{{"name":"{name}","query_type":"TXT"}}"#);
+    let out = rt
+        .run(&caller_wasm("doh_query", &args, 256), limits)
+        .await
+        .expect("run");
+    // The client times out or the canned socket closes; either way any
+    // connection attempt is visible as a pending accept.
+    let contacted = listener.accept().is_ok();
+    (out.exit_code, contacted)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn doh_query_is_deny_all_without_a_dns_grant() {
+    // regression: doh_query resolved any name, a DNS exfiltration channel.
+    let (code, contacted) = doh_attempt("secret.attacker.net", open_limits()).await;
+    assert_eq!(code, abi::E_FORBIDDEN);
+    assert!(!contacted, "no request may be sent for a denied name");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn doh_query_honours_exact_and_wildcard_grants() {
+    let limits = || open_limits().allowing_dns(["api.example.com", "*.svc.example.org"]);
+    let (code, contacted) = doh_attempt("leak.attacker.net", limits()).await;
+    assert_eq!(code, abi::E_FORBIDDEN);
+    assert!(!contacted);
+    let (code, _) = doh_attempt("svc.example.org", limits()).await;
+    assert_eq!(code, abi::E_FORBIDDEN, "wildcard excludes apex");
+    for ok in ["api.example.com", "a.svc.example.org"] {
+        let (code, contacted) = doh_attempt(ok, limits()).await;
+        assert_ne!(code, abi::E_FORBIDDEN, "{ok}");
+        assert!(contacted, "{ok} reached the resolver");
+    }
 }
