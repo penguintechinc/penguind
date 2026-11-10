@@ -21,10 +21,12 @@ use penguin_daemon::broker::EventBroker;
 use penguin_daemon::config::{ConfigStore, DaemonConfig};
 use penguin_daemon::external::{ExternalLoader, PluginDirLoader};
 use penguin_daemon::host::{DaemonHostFactory, HostFactory, SecretStoreProvider};
+use penguin_daemon::hub::{HubSpawn, spawn_hub_client};
 use penguin_daemon::lock::{self, LockError};
 use penguin_daemon::logring::LogRing;
 use penguin_daemon::service::{DaemonService, UpdateClient};
 use penguin_daemon::supervisor::{Supervisor, SupervisorConfig};
+use penguin_hub_client::ClampedLicense;
 use penguin_ipc::groups_unix::SystemGroups;
 use penguin_ipc::listen_unix::{self, ListenerConfig, PeerAuthInterceptor};
 use penguin_ipc::{GroupResolver, IpcError};
@@ -222,7 +224,10 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     }));
     let license_refresh = license_client.spawn_background_refresh(LICENSE_REFRESH_INTERVAL);
     let otel_enabled = license_client.feature_enabled(OTEL_TELEMETRY_FLAG);
-    let license: Arc<dyn LicenseChecker> = license_client;
+    // Flags the hub may only restrict: effective = license && hub (a pass-through
+    // until the hub client, itself behind `penguind.hub-client`, supplies any).
+    let clamped_license = Arc::new(ClampedLicense::new(license_client));
+    let license: Arc<dyn LicenseChecker> = clamped_license.clone();
 
     // `otel::init` never panics and never blocks: disabled or a malformed
     // `OTEL_EXPORTER_OTLP_ENDPOINT` both simply yield `None`, logged at warn
@@ -270,9 +275,14 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     // `SecretsStoreProvider` gives every module its own
     // `secrets_root.namespaced(module)` view, so `host_for` never hands two
     // modules the same store.
+    // Hub-client tokens live in the same encrypted secret store (never a plaintext
+    // file), under their own namespace.
+    let hub_secrets: Arc<dyn penguin_sdk::SecretStore> =
+        Arc::new(secrets_root.namespaced("hub-client"));
+    let metrics_registry = telemetry.registry().clone();
     let secrets_provider: Arc<dyn SecretStoreProvider> =
         Arc::new(SecretsStoreProvider::new(secrets_root));
-    let host_factory: Arc<dyn HostFactory> = Arc::new(DaemonHostFactory::new(
+    let daemon_factory = Arc::new(DaemonHostFactory::new(
         telemetry,
         Arc::new(config_store),
         secrets_provider,
@@ -280,6 +290,20 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
         events,
         args.state_dir.clone(),
     ));
+    let host_factory: Arc<dyn HostFactory> = daemon_factory.clone();
+
+    // Hub client: OFF unless PostHog flag `penguind.hub-client` is on and a local
+    // `hub.yaml` exists; the hub URL, trust keys and network allowlist come only
+    // from that local file.
+    let hub_task = spawn_hub_client(HubSpawn {
+        config_dir: args.config_dir.clone(),
+        state_dir: args.state_dir.clone(),
+        factory: daemon_factory,
+        secrets: hub_secrets,
+        license: clamped_license,
+        registry: metrics_registry,
+    })
+    .await;
 
     // `daemon_cfg.plugins_dir` is scanned lazily, one `<name>/` at a time,
     // only when something actually tries to `load` that name — constructing
@@ -376,6 +400,9 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
 
     tracing::info!("shutting down");
     supervisor.shutdown().await;
+    if let Some(task) = hub_task {
+        task.stop().await;
+    }
     license_refresh.stop().await;
     // Flush any buffered spans/logs/metrics before the process exits. Runs
     // off this async worker and is bounded to `OTEL_SHUTDOWN_BUDGET` total

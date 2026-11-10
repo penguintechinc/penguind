@@ -24,6 +24,10 @@ penguin-telemetry.workspace = true
 # wasmtime host: backs `HostServices::call_tool` and the wasm module runner,
 # both gated by the `penguind.wasm-modules` flag.
 penguin-wasm-host.workspace = true
+# Hub sync client (enroll, ETag poll, offline cache, limits clamp); spawned
+# behind the `penguind.hub-client` flag from `hub.rs`.
+penguin-hub-client.workspace = true
+prometheus.workspace = true
 penguin-extplugin.workspace = true
 penguin-goplugin-host.workspace = true
 # waddlebot module: needed for the session proxy registry access in the daemon service.
