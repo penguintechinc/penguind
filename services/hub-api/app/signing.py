@@ -52,8 +52,14 @@ def module_message(module_id: str, version: str, sha256: str) -> bytes:
 
 def _signature_blob(signature: str) -> bytes:
     """Extract the 74-byte minisign signature blob from a bare or full minisig text."""
+    # A full .minisig is: untrusted comment, signature, trusted comment, global signature.
+    # The signature is the first line that is not a comment; the global signature that ends
+    # the file is a different 64-byte blob and must never be picked.
     lines = [line.strip() for line in signature.strip().splitlines() if line.strip()]
-    candidate = lines[-1] if lines else ""
+    payload = [
+        ln for ln in lines if not ln.lower().startswith(("untrusted comment:", "trusted comment:"))
+    ]
+    candidate = payload[0] if payload else ""
     try:
         raw = base64.b64decode(candidate, validate=True)
     except ValueError as exc:

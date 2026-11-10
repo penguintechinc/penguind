@@ -71,3 +71,10 @@ penguin-module-tobogganing.workspace = true
 prometheus.workspace = true
 # WAT -> wasm fixtures for the wasm module runner tests (`src/wasm.rs`).
 wat.workspace = true
+
+# Hub E2E agent driver (tests/e2e/hub_api): the real hub client + daemon wasm
+# path, driven by the pytest harness over stdin/stdout. Built only by
+# `make test-e2e-hub`; uses dev-dependencies (minisign, wat, sha2, tempfile).
+[[example]]
+name = "hub_e2e_agent"
+path = "../../tests/e2e/hub_api/agent/main.rs"

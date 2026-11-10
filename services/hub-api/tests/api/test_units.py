@@ -160,6 +160,11 @@ def test_minisign_parsing_and_verification_edges() -> None:
     assert verify_module_signature((mk,), "mod-x", "1.2.3", "a" * 64, sig_ed) is True
     plain = base64.b64encode(b"Ed" + keyid + key.sign(msg)).decode()
     assert verify_module_signature((mk,), "mod-x", "1.2.3", "a" * 64, plain) is True
+    # regression (hub E2E): a full .minisig ends with the global signature line, which must
+    # not be mistaken for the signature itself.
+    global_sig = base64.b64encode(b"g" * 64).decode()
+    full = f"untrusted comment: sig\n{sig_ed}\ntrusted comment: t\n{global_sig}\n"
+    assert verify_module_signature((mk,), "mod-x", "1.2.3", "a" * 64, full) is True
     assert verify_module_signature((mk,), "mod-x", "9.9.9", "a" * 64, plain) is False
     other = MinisignKey.parse(
         base64.b64encode(
