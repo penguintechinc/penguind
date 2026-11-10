@@ -77,7 +77,8 @@ class TenantDB:
         public_id = uuid.uuid4()
         self._table(table).insert(tenant_id=self._tenant_id, public_id=public_id, **values)
         row = self.get(table, public_id)
-        assert row is not None  # noqa: S101 - just inserted in this tenant
+        if row is None:
+            raise RuntimeError("row vanished immediately after insert")
         return row
 
     def select(
@@ -107,6 +108,13 @@ class TenantDB:
         self._check_writable(values)
         self._check_fks(table, values)
         q = self._scope(table, self._table(table).public_id == public_id)
+        return int(self._db(q).update(updated_at=datetime.now(UTC), **values))
+
+    def compare_and_update(self, table: str, condition: Query, /, **values: Any) -> int:
+        """Update tenant rows matching ``condition`` only; return rowcount (0 = lost race)."""
+        self._check_writable(values)
+        self._check_fks(table, values)
+        q = self._scope(table, condition)
         return int(self._db(q).update(updated_at=datetime.now(UTC), **values))
 
     def delete(self, table: str, query: Query | None = None) -> int:

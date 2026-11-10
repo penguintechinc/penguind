@@ -153,4 +153,14 @@ refresh_tokens = Table(
     Column("revoked_at", DateTime(timezone=True), nullable=True),
 )
 
+audit_events = Table(
+    "audit_events",
+    metadata,
+    *_base_columns(),
+    Column("action", SmallInteger, nullable=False),
+    Column("target_type", SmallInteger, nullable=False),
+    Column("target_public_id", Uuid, nullable=True),
+    Column("actor", String(255), nullable=False),
+)
+
 ENTITY_TABLES: tuple[str, ...] = tuple(metadata.tables)

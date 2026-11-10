@@ -77,6 +77,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.oidc.name }}
                   key: {{ .Values.secrets.oidc.audienceKey }}
+            - name: HUB_AGENT_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secrets.agentJwt.name is required" .Values.secrets.agentJwt.name }}
+                  key: {{ .Values.secrets.agentJwt.key }}
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otel.serviceName | quote }}
             {{- range $k, $v := .Values.otel.env }}

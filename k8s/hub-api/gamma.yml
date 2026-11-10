@@ -16,5 +16,6 @@ secrets:
   db: {name: hub-api-db}
   s3: {name: hub-api-s3}
   oidc: {name: hub-api-oidc}
+  agentJwt: {name: hub-api-agent-jwt}
 # Fill per-env egress destinations (postgres/s3/oidc/otel) before deploy; the
 # baseline has none, so egress stays closed until set.

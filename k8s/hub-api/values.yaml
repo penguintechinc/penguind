@@ -48,6 +48,7 @@ secrets:
   db:   {name: "", key: dsn}
   s3:   {name: "", accessKeyKey: access-key-id, secretKeyKey: secret-access-key}
   oidc: {name: "", issuerKey: issuer-url, audienceKey: audience}
+  agentJwt: {name: "", key: signing-key}   # HS256 key for agent machine JWTs (>=32 chars)
 
 # OTLP destination comes from standard OTEL_* vars; nothing is hardcoded.
 otel:

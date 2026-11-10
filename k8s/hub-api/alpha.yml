@@ -26,6 +26,7 @@ secrets:
   db: {name: hub-api-db}
   s3: {name: hub-api-s3}
   oidc: {name: hub-api-oidc}
+  agentJwt: {name: hub-api-agent-jwt}
 otel:
   env:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc:4317"
