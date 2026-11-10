@@ -39,6 +39,7 @@ pub mod broker;
 pub mod config;
 pub mod external;
 pub mod host;
+pub mod hub;
 pub mod lock;
 pub mod logring;
 pub mod service;

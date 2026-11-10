@@ -39,6 +39,9 @@ pub enum Backend {
         /// Directory the encrypted-file backend is rooted at.
         file_dir: PathBuf,
     },
+    /// Use the OS keyring only; [`Store::open`] fails when it is unreachable
+    /// so the caller can choose (and announce) its own fallback.
+    PlatformOnly,
 }
 
 /// A [`Store`]'s configuration, mirroring the Go `Config` struct.
@@ -81,6 +84,12 @@ impl Store {
         let backend = match cfg.backend {
             Backend::FileOnly { file_dir } => ActiveBackend::File(FileBackend::open(file_dir)?),
             Backend::Auto { file_dir } => select_auto_backend(&service_name, file_dir)?,
+            Backend::PlatformOnly => {
+                if !PlatformBackend::probe(&service_name) {
+                    return Err(SecretError::Other("platform keyring unreachable".into()));
+                }
+                ActiveBackend::Platform(PlatformBackend::new(&service_name))
+            }
         };
 
         Ok(Store {
