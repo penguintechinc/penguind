@@ -1,13 +1,17 @@
 # penguind ↔ hub-api Sync Protocol (v1)
 
-Contract: `services/hub-api/openapi/v1.yaml` (`/agent/v1/*`).
+Contract: `services/hub-api/openapi/v1.yaml` (`/api/v1/agent/*`).
+
+## Response Envelope
+
+All JSON responses: `{status: success|error, data, meta: {version, timestamp, trace_id}}` (`backend.md`). Unwrapped: module binary (`application/wasm`), 302 redirect, 304 Not Modified. ETag applies to the canonical `data` payload.
 
 ## Identity & Enrollment
 
 ```
 admin: pdcli hub bootstrap create --group G  → one-time token (shown once, hub stores hash)
-agent: POST /agent/v1/enroll  (Bearer <bootstrap>)  → {agent_id, access_token ≤1h, refresh_token}
-agent: POST /agent/v1/token   (refresh_token)       → new pair; old refresh token dead
+agent: POST /api/v1/agent/enroll  (Bearer <bootstrap>)  → {agent_id, access_token ≤1h, refresh_token}
+agent: POST /api/v1/agent/token   (refresh_token)       → new pair; old refresh token dead
 ```
 
 | Mechanism | When | Notes |
@@ -23,9 +27,9 @@ agent: POST /agent/v1/token   (refresh_token)       → new pair; old refresh to
 
 ```
 every poll_interval_s (default 300) ± 10% jitter:
-  GET /agent/v1/sync  If-None-Match: <last applied ETag>
+  GET /api/v1/agent/sync  If-None-Match: <last applied ETag>
     304 → nothing to do; refresh last_contact
-    200 → verify + apply bundle → POST /agent/v1/status {applied_etag, result, modules}
+    200 → verify + apply bundle → POST /api/v1/agent/status {applied_etag, result, modules}
     401 → refresh token once; still 401 → back off, keep cached state
     410 → agent revoked: stop syncing, unload hub-delivered modules, require re-enroll
     429/5xx/network → exponential backoff (cap = poll_interval_s), keep cached state

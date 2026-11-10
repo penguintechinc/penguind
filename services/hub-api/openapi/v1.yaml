@@ -3,11 +3,18 @@ info:
   title: penguind hub-api
   version: 1.0.0
   summary: CLI-only management hub for penguind agents.
-  description: |
-    Admin API (`/v1/...`) is consumed by `pdcli hub ...` using OIDC device-flow tokens.
-    Agent API (`/agent/v1/...`) is consumed by penguind agents over SPIFFE mTLS, or a
+  description: 'Admin API (`/api/v1/...`) is consumed by `pdcli hub ...` using OIDC device-flow tokens.
+
+    Agent API (`/api/v1/agent/...`) is consumed by penguind agents over SPIFFE mTLS, or a
+
     machine JWT obtained via a one-time bootstrap token. The hub never holds signing keys.
+
     All entities are referenced by `public_id` UUID; numeric PKs never cross the API.
+
+    All JSON responses (including errors) use the `{status,data,meta}` envelope; `application/wasm` bodies, 302
+    redirects and 304 responses are unwrapped.
+
+    '
   license:
     name: AGPL-3.0-or-later
     identifier: AGPL-3.0-or-later
@@ -15,31 +22,30 @@ info:
     name: PenguinTech
     url: https://penguintech.io
 servers:
-  - url: https://hub.example.invalid
-    description: Placeholder; deployment-specific.
+- url: https://hub.example.invalid
+  description: Placeholder; deployment-specific.
 tags:
-  - name: groups
-    description: Agent groups (config + module assignment scope).
-  - name: agents
-    description: Enrolled agents and per-agent overrides.
-  - name: modules
-    description: Signed WASM module artifacts.
-  - name: flags
-    description: Restrict-only hub feature flags.
-  - name: bootstrap
-    description: One-time bootstrap tokens for agent enrollment.
-  - name: agent
-    description: Agent-facing sync protocol.
-  - name: health
-    description: Liveness and readiness.
-
+- name: groups
+  description: Agent groups (config + module assignment scope).
+- name: agents
+  description: Enrolled agents and per-agent overrides.
+- name: modules
+  description: Signed WASM module artifacts.
+- name: flags
+  description: Restrict-only hub feature flags.
+- name: bootstrap
+  description: One-time bootstrap tokens for agent enrollment.
+- name: agent
+  description: Agent-facing sync protocol.
+- name: health
+  description: Liveness and readiness.
 security:
-  - oidc: []
-
+- oidc: []
 paths:
   /healthz:
     get:
-      tags: [health]
+      tags:
+      - health
       operationId: healthz
       summary: Liveness probe.
       description: Liveness probe.
@@ -49,10 +55,19 @@ paths:
           description: Alive.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Health' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Health'
   /readyz:
     get:
-      tags: [health]
+      tags:
+      - health
       operationId: readyz
       summary: Readiness probe (DB and blob store reachable).
       description: Readiness probe (DB and blob store reachable).
@@ -62,162 +77,276 @@ paths:
           description: Ready.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Health' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/groups:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Health'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/groups:
     get:
-      tags: [groups]
+      tags:
+      - groups
       operationId: listGroups
       summary: List groups.
       description: List groups.
-      security: [{ oidc: ['hub:groups:read'] }]
+      security:
+      - oidc:
+        - hub:groups:read
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - name: name_prefix
-          in: query
-          description: Filter by display-name prefix.
-          schema: { type: string, maxLength: 128 }
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: name_prefix
+        in: query
+        description: Filter by display-name prefix.
+        schema:
+          type: string
+          maxLength: 128
       responses:
         '200':
           description: Page of groups.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GroupPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/GroupPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
-      tags: [groups]
+      tags:
+      - groups
       operationId: createGroup
       summary: Create a group.
       description: Create a group.
-      security: [{ oidc: ['hub:groups:write'] }]
+      security:
+      - oidc:
+        - hub:groups:write
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/GroupCreate' }
+            schema:
+              $ref: '#/components/schemas/GroupCreate'
       responses:
         '201':
           description: Created.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Group' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-  /v1/groups/{group_id}:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Group'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/groups/{group_id}:
     parameters:
-      - $ref: '#/components/parameters/GroupId'
+    - $ref: '#/components/parameters/GroupId'
     get:
-      tags: [groups]
+      tags:
+      - groups
       operationId: getGroup
       summary: Get a group.
       description: Get a group.
-      security: [{ oidc: ['hub:groups:read'] }]
+      security:
+      - oidc:
+        - hub:groups:read
       responses:
         '200':
           description: Group.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Group' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Group'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     patch:
-      tags: [groups]
+      tags:
+      - groups
       operationId: updateGroup
       summary: Update a group (optimistic concurrency via If-Match).
       description: Update a group (optimistic concurrency via If-Match).
-      security: [{ oidc: ['hub:groups:write'] }]
+      security:
+      - oidc:
+        - hub:groups:write
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/GroupUpdate' }
+            schema:
+              $ref: '#/components/schemas/GroupUpdate'
       responses:
         '200':
           description: Updated.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Group' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '412': { $ref: '#/components/responses/PreconditionFailed' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Group'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
     delete:
-      tags: [groups]
+      tags:
+      - groups
       operationId: deleteGroup
       summary: Delete a group (agents lose its assignments on next poll).
       description: Delete a group (agents lose its assignments on next poll).
-      security: [{ oidc: ['hub:groups:write'] }]
+      security:
+      - oidc:
+        - hub:groups:write
       responses:
-        '204': { description: Deleted. }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-  /v1/groups/{group_id}/members:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/groups/{group_id}/members:
     parameters:
-      - $ref: '#/components/parameters/GroupId'
+    - $ref: '#/components/parameters/GroupId'
     put:
-      tags: [groups]
+      tags:
+      - groups
       operationId: setGroupMembers
       summary: Replace group membership with the given agent set.
       description: Replace group membership with the given agent set.
-      security: [{ oidc: ['hub:groups:write'] }]
+      security:
+      - oidc:
+        - hub:groups:write
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MemberSet' }
+            schema:
+              $ref: '#/components/schemas/MemberSet'
       responses:
         '200':
           description: Membership set.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/MemberSet' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-  /v1/groups/{group_id}/modules:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/MemberSet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/groups/{group_id}/modules:
     parameters:
-      - $ref: '#/components/parameters/GroupId'
+    - $ref: '#/components/parameters/GroupId'
     get:
-      tags: [groups]
+      tags:
+      - groups
       operationId: listGroupModules
       summary: List module versions assigned to a group.
       description: List module versions assigned to a group.
-      security: [{ oidc: ['hub:groups:read'] }]
+      security:
+      - oidc:
+        - hub:groups:read
       responses:
         '200':
           description: Assignments.
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/ModuleAssignment' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/ModuleAssignment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     put:
-      tags: [groups]
+      tags:
+      - groups
       operationId: setGroupModules
       summary: Replace the module assignment set of a group.
       description: Replace the module assignment set of a group.
-      security: [{ oidc: ['hub:groups:write'] }]
+      security:
+      - oidc:
+        - hub:groups:write
       requestBody:
         required: true
         content:
@@ -225,357 +354,587 @@ paths:
             schema:
               type: array
               maxItems: 256
-              items: { $ref: '#/components/schemas/ModuleAssignmentInput' }
+              items:
+                $ref: '#/components/schemas/ModuleAssignmentInput'
       responses:
         '200':
           description: Assignments set.
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/ModuleAssignment' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
-
-  /v1/agents:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/ModuleAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /api/v1/agents:
     get:
-      tags: [agents]
+      tags:
+      - agents
       operationId: listAgents
       summary: List enrolled agents.
       description: List enrolled agents.
-      security: [{ oidc: ['hub:agents:read'] }]
+      security:
+      - oidc:
+        - hub:agents:read
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - name: group_id
-          in: query
-          description: Only agents in this group.
-          schema: { type: string, format: uuid }
-        - name: status
-          in: query
-          description: Filter by AgentStatus code.
-          schema: { $ref: '#/components/schemas/AgentStatus' }
-        - name: stale
-          in: query
-          description: Only agents that have not polled within max_stale.
-          schema: { type: boolean }
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: group_id
+        in: query
+        description: Only agents in this group.
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        description: Filter by AgentStatus code.
+        schema:
+          $ref: '#/components/schemas/AgentStatus'
+      - name: stale
+        in: query
+        description: Only agents that have not polled within max_stale.
+        schema:
+          type: boolean
       responses:
         '200':
           description: Page of agents.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AgentPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-  /v1/agents/{agent_id}:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/AgentPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/agents/{agent_id}:
     parameters:
-      - $ref: '#/components/parameters/AgentId'
+    - $ref: '#/components/parameters/AgentId'
     get:
-      tags: [agents]
+      tags:
+      - agents
       operationId: getAgent
       summary: Get an agent, including its computed effective config.
       description: Get an agent, including its computed effective config.
-      security: [{ oidc: ['hub:agents:read'] }]
+      security:
+      - oidc:
+        - hub:agents:read
       responses:
         '200':
           description: Agent.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AgentDetail' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/AgentDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags: [agents]
+      tags:
+      - agents
       operationId: revokeAgent
       summary: Revoke an agent; its credentials stop working and it receives 410.
       description: Revoke an agent; its credentials stop working and it receives 410.
-      security: [{ oidc: ['hub:agents:write'] }]
+      security:
+      - oidc:
+        - hub:agents:write
       responses:
-        '204': { description: Revoked. }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-  /v1/agents/{agent_id}/override:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/agents/{agent_id}/override:
     parameters:
-      - $ref: '#/components/parameters/AgentId'
+    - $ref: '#/components/parameters/AgentId'
     put:
-      tags: [agents]
+      tags:
+      - agents
       operationId: setAgentOverride
       summary: Set the agent-level override (wins over group merge, still clamped by license).
       description: Set the agent-level override (wins over group merge, still clamped by license).
-      security: [{ oidc: ['hub:agents:write'] }]
+      security:
+      - oidc:
+        - hub:agents:write
       parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ConfigPolicy' }
+            schema:
+              $ref: '#/components/schemas/ConfigPolicy'
       responses:
         '200':
           description: Override set.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ConfigPolicy' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '412': { $ref: '#/components/responses/PreconditionFailed' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/ConfigPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
     delete:
-      tags: [agents]
+      tags:
+      - agents
       operationId: clearAgentOverride
       summary: Remove the agent-level override.
       description: Remove the agent-level override.
-      security: [{ oidc: ['hub:agents:write'] }]
+      security:
+      - oidc:
+        - hub:agents:write
       responses:
-        '204': { description: Cleared. }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /v1/bootstrap-tokens:
+        '204':
+          description: Cleared.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/bootstrap-tokens:
     post:
-      tags: [bootstrap]
+      tags:
+      - bootstrap
       operationId: createBootstrapToken
       summary: Mint a one-time bootstrap token (secret returned exactly once).
       description: Mint a one-time bootstrap token (secret returned exactly once).
-      security: [{ oidc: ['hub:bootstrap:write'] }]
+      security:
+      - oidc:
+        - hub:bootstrap:write
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/BootstrapTokenCreate' }
+            schema:
+              $ref: '#/components/schemas/BootstrapTokenCreate'
       responses:
         '201':
           description: Created; `token` is shown only in this response.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/BootstrapTokenSecret' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/BootstrapTokenSecret'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     get:
-      tags: [bootstrap]
+      tags:
+      - bootstrap
       operationId: listBootstrapTokens
       summary: List bootstrap tokens (metadata only).
       description: List bootstrap tokens (metadata only).
-      security: [{ oidc: ['hub:bootstrap:read'] }]
+      security:
+      - oidc:
+        - hub:bootstrap:read
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Page of tokens.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/BootstrapTokenPage' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-  /v1/bootstrap-tokens/{token_id}:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/BootstrapTokenPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/bootstrap-tokens/{token_id}:
     parameters:
-      - name: token_id
-        in: path
-        required: true
-        description: Bootstrap token public_id.
-        schema: { type: string, format: uuid }
+    - name: token_id
+      in: path
+      required: true
+      description: Bootstrap token public_id.
+      schema:
+        type: string
+        format: uuid
     delete:
-      tags: [bootstrap]
+      tags:
+      - bootstrap
       operationId: revokeBootstrapToken
       summary: Revoke an unused bootstrap token.
       description: Revoke an unused bootstrap token.
-      security: [{ oidc: ['hub:bootstrap:write'] }]
+      security:
+      - oidc:
+        - hub:bootstrap:write
       responses:
-        '204': { description: Revoked. }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /v1/modules:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/modules:
     get:
-      tags: [modules]
+      tags:
+      - modules
       operationId: listModules
       summary: List module versions.
       description: List module versions.
-      security: [{ oidc: ['hub:modules:read'] }]
+      security:
+      - oidc:
+        - hub:modules:read
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - name: module_id
-          in: query
-          description: Filter by module id (e.g. `waddleai`).
-          schema: { $ref: '#/components/schemas/ModuleName' }
-        - name: status
-          in: query
-          description: Filter by ModuleStatus code.
-          schema: { $ref: '#/components/schemas/ModuleStatus' }
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: module_id
+        in: query
+        description: Filter by module id (e.g. `waddleai`).
+        schema:
+          $ref: '#/components/schemas/ModuleName'
+      - name: status
+        in: query
+        description: Filter by ModuleStatus code.
+        schema:
+          $ref: '#/components/schemas/ModuleStatus'
       responses:
         '200':
           description: Page of module versions.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ModulePage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/ModulePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
-      tags: [modules]
+      tags:
+      - modules
       operationId: uploadModule
       summary: Upload a pre-signed WASM module; hub recomputes sha256 and verifies the minisign signature.
       description: Upload a pre-signed WASM module; hub recomputes sha256 and verifies the minisign signature.
-      security: [{ oidc: ['hub:modules:write'] }]
+      security:
+      - oidc:
+        - hub:modules:write
       requestBody:
         required: true
         content:
           multipart/form-data:
-            schema: { $ref: '#/components/schemas/ModuleUpload' }
+            schema:
+              $ref: '#/components/schemas/ModuleUpload'
       responses:
         '201':
           description: Stored.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Module' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413': { $ref: '#/components/responses/TooLarge' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/modules/{module_version_id}:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Module'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /api/v1/modules/{module_version_id}:
     parameters:
-      - $ref: '#/components/parameters/ModuleVersionId'
+    - $ref: '#/components/parameters/ModuleVersionId'
     get:
-      tags: [modules]
+      tags:
+      - modules
       operationId: getModule
       summary: Get a module version.
       description: Get a module version.
-      security: [{ oidc: ['hub:modules:read'] }]
+      security:
+      - oidc:
+        - hub:modules:read
       responses:
         '200':
           description: Module version.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Module' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Module'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     patch:
-      tags: [modules]
+      tags:
+      - modules
       operationId: setModuleStatus
       summary: Change status (e.g. yank). Yanked versions are removed from agent manifests.
       description: Change status (e.g. yank). Yanked versions are removed from agent manifests.
-      security: [{ oidc: ['hub:modules:write'] }]
+      security:
+      - oidc:
+        - hub:modules:write
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ModuleStatusUpdate' }
+            schema:
+              $ref: '#/components/schemas/ModuleStatusUpdate'
       responses:
         '200':
           description: Updated.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Module' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /v1/flags:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Module'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/flags:
     get:
-      tags: [flags]
+      tags:
+      - flags
       operationId: listFlags
       summary: List hub flags (restrict-only; effective = license AND hub).
       description: List hub flags (restrict-only; effective = license AND hub).
-      security: [{ oidc: ['hub:flags:read'] }]
+      security:
+      - oidc:
+        - hub:flags:read
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - name: group_id
-          in: query
-          description: Only flags scoped to this group.
-          schema: { type: string, format: uuid }
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - name: group_id
+        in: query
+        description: Only flags scoped to this group.
+        schema:
+          type: string
+          format: uuid
       responses:
         '200':
           description: Page of flags.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FlagPage' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/FlagPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     put:
-      tags: [flags]
+      tags:
+      - flags
       operationId: upsertFlag
       summary: Create or update a flag at tenant or group scope.
       description: Create or update a flag at tenant or group scope.
-      security: [{ oidc: ['hub:flags:write'] }]
+      security:
+      - oidc:
+        - hub:flags:write
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/FlagInput' }
+            schema:
+              $ref: '#/components/schemas/FlagInput'
       responses:
         '200':
           description: Upserted.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Flag' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-  /v1/flags/{flag_id}:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/Flag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/flags/{flag_id}:
     parameters:
-      - name: flag_id
-        in: path
-        required: true
-        description: Flag public_id.
-        schema: { type: string, format: uuid }
+    - name: flag_id
+      in: path
+      required: true
+      description: Flag public_id.
+      schema:
+        type: string
+        format: uuid
     delete:
-      tags: [flags]
+      tags:
+      - flags
       operationId: deleteFlag
       summary: Delete a flag (removes the restriction).
       description: Delete a flag (removes the restriction).
-      security: [{ oidc: ['hub:flags:write'] }]
+      security:
+      - oidc:
+        - hub:flags:write
       responses:
-        '204': { description: Deleted. }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /agent/v1/enroll:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/agent/enroll:
     post:
-      tags: [agent]
+      tags:
+      - agent
       operationId: agentEnroll
       summary: Exchange a one-time bootstrap token for a machine JWT and refresh token.
       description: Consumes the bootstrap token atomically; reuse returns 401.
-      security: [{ bootstrapToken: [] }]
+      security:
+      - bootstrapToken: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/EnrollRequest' }
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
       responses:
         '201':
           description: Enrolled.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TokenResponse' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /agent/v1/token:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/agent/token:
     post:
-      tags: [agent]
+      tags:
+      - agent
       operationId: agentRefresh
       summary: Rotate a refresh token; reuse of a rotated token revokes the whole chain.
       description: Rotate a refresh token; reuse of a rotated token revokes the whole chain.
@@ -584,91 +943,135 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/RefreshRequest' }
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
       responses:
         '200':
           description: New token pair.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TokenResponse' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '410': { $ref: '#/components/responses/Gone' }
-  /agent/v1/sync:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/Gone'
+  /api/v1/agent/sync:
     get:
-      tags: [agent]
+      tags:
+      - agent
       operationId: agentSync
       summary: Fetch the agent's effective desired state (config, flags, module manifests).
       description: Fetch the agent's effective desired state (config, flags, module manifests).
       security:
-        - mtls: []
-        - agentJwt: ['hub:agent:sync']
+      - mtls: []
+      - agentJwt:
+        - hub:agent:sync
       parameters:
-        - $ref: '#/components/parameters/IfNoneMatch'
+      - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Desired state.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
-            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SyncBundle' }
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Envelope'
+                - type: object
+                  properties:
+                    status:
+                      const: success
+                    data:
+                      $ref: '#/components/schemas/SyncBundle'
         '304':
           description: Not modified since If-None-Match.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '410': { $ref: '#/components/responses/Gone' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /agent/v1/status:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/agent/status:
     post:
-      tags: [agent]
+      tags:
+      - agent
       operationId: agentStatus
       summary: Report applied state (ETag applied, module versions loaded, errors).
       description: Report applied state (ETag applied, module versions loaded, errors).
       security:
-        - mtls: []
-        - agentJwt: ['hub:agent:report']
+      - mtls: []
+      - agentJwt:
+        - hub:agent:report
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/StatusReport' }
+            schema:
+              $ref: '#/components/schemas/StatusReport'
       responses:
-        '204': { description: Accepted. }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '410': { $ref: '#/components/responses/Gone' }
-  /agent/v1/modules/{module_version_id}/binary:
+        '204':
+          description: Accepted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/Gone'
+  /api/v1/agent/modules/{module_version_id}/binary:
     parameters:
-      - $ref: '#/components/parameters/ModuleVersionId'
+    - $ref: '#/components/parameters/ModuleVersionId'
     get:
-      tags: [agent]
+      tags:
+      - agent
       operationId: agentFetchModuleBinary
       summary: Download a module binary (or 302 to a short-lived presigned S3 URL).
       description: Download a module binary (or 302 to a short-lived presigned S3 URL).
       security:
-        - mtls: []
-        - agentJwt: ['hub:agent:sync']
+      - mtls: []
+      - agentJwt:
+        - hub:agent:sync
       responses:
         '200':
           description: WASM binary.
           headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/wasm:
-              schema: { type: string, contentMediaType: application/wasm }
+              schema:
+                type: string
+                contentMediaType: application/wasm
         '302':
           description: Redirect to presigned blob URL (expires ≤5 min).
           headers:
             Location:
               description: Presigned URL.
-              schema: { type: string, format: uri }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '410': { $ref: '#/components/responses/Gone' }
-
+              schema:
+                type: string
+                format: uri
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
 components:
   securitySchemes:
     oidc:
@@ -688,10 +1091,13 @@ components:
             hub:flags:write: flags write
             hub:bootstrap:read: bootstrap read
             hub:bootstrap:write: bootstrap write
-      description: |
-        OIDC provider; pdcli uses the RFC 8628 device grant (not expressible in OAS 3.1).
+      description: 'OIDC provider; pdcli uses the RFC 8628 device grant (not expressible in OAS 3.1).
+
         pdcli admin tokens via OIDC device flow. Token MUST carry `tenant`; scopes are
+
         `hub:<resource>:<read|write>`. Tenant mismatch = 403.
+
+        '
     mtls:
       type: mutualTLS
       description: SPIFFE X.509-SVID `spiffe://penguintech.io/<env>/penguind/<agent public_id>`.
@@ -699,192 +1105,334 @@ components:
       type: oauth2
       flows:
         clientCredentials:
-          tokenUrl: /agent/v1/token
+          tokenUrl: /api/v1/agent/token
           scopes:
             hub:agent:sync: fetch desired state and module binaries
             hub:agent:report: report applied state
-      description: Machine JWT (≤1h) issued by /agent/v1/enroll or /agent/v1/token; carries `tenant` and `sub`=agent public_id.
+      description: Machine JWT (≤1h) issued by /api/v1/agent/enroll or /api/v1/agent/token; carries `tenant` and `sub`=agent
+        public_id.
     bootstrapToken:
       type: http
       scheme: bearer
-      description: One-time bootstrap token minted via /v1/bootstrap-tokens.
-
+      description: One-time bootstrap token minted via /api/v1/bootstrap-tokens.
   parameters:
     Limit:
       name: limit
       in: query
       description: Page size.
-      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
     Cursor:
       name: cursor
       in: query
       description: Opaque cursor from a previous page's `next_cursor`.
-      schema: { type: string, maxLength: 512 }
+      schema:
+        type: string
+        maxLength: 512
     GroupId:
       name: group_id
       in: path
       required: true
       description: Group public_id.
-      schema: { type: string, format: uuid }
+      schema:
+        type: string
+        format: uuid
     AgentId:
       name: agent_id
       in: path
       required: true
       description: Agent public_id.
-      schema: { type: string, format: uuid }
+      schema:
+        type: string
+        format: uuid
     ModuleVersionId:
       name: module_version_id
       in: path
       required: true
       description: Module version public_id.
-      schema: { type: string, format: uuid }
+      schema:
+        type: string
+        format: uuid
     IfNoneMatch:
       name: If-None-Match
       in: header
       description: ETag of the last applied bundle.
-      schema: { type: string }
+      schema:
+        type: string
     IfMatch:
       name: If-Match
       in: header
       description: ETag for optimistic concurrency.
-      schema: { type: string }
-
+      schema:
+        type: string
   headers:
     ETag:
       description: Strong entity tag (sha256 of canonical JSON).
-      schema: { type: string }
+      schema:
+        type: string
     CacheControl:
       description: '`private, max-age=300`.'
-      schema: { type: string }
-
+      schema:
+        type: string
   responses:
     BadRequest:
       description: Invalid input.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     Unauthorized:
       description: Missing or invalid credentials.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     Forbidden:
       description: Missing scope or tenant mismatch.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     NotFound:
       description: Not found in caller's tenant.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     Conflict:
       description: Duplicate (e.g. module id+version already exists).
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     Gone:
       description: Agent revoked or deleted; agent must stop syncing and re-enroll.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     PreconditionFailed:
       description: If-Match did not match current ETag.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     TooLarge:
       description: Upload exceeds size limit.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     Unprocessable:
       description: Semantically invalid (bad signature, sha mismatch, unknown module).
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     TooManyRequests:
       description: Rate limited; honour Retry-After.
       headers:
         Retry-After:
           description: Seconds to wait.
-          schema: { type: integer }
+          schema:
+            type: integer
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
     Unavailable:
       description: Dependency unavailable.
       content:
         application/problem+json:
-          schema: { $ref: '#/components/schemas/Error' }
-
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Envelope'
+            - type: object
+              properties:
+                status:
+                  const: error
+                data:
+                  $ref: '#/components/schemas/Error'
   schemas:
     Error:
       type: object
       description: RFC 9457 problem details.
-      required: [type, title, status, code]
+      required:
+      - type
+      - title
+      - status
+      - code
       properties:
-        type: { type: string, format: uri-reference }
-        title: { type: string }
-        status: { type: integer }
-        code: { type: integer, description: Stable hub error code. }
-        detail: { type: string }
-        instance: { type: string }
-        trace_id: { type: string, description: OTel trace id. }
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: integer
+          description: Stable hub error code.
+        detail:
+          type: string
+        instance:
+          type: string
+        trace_id:
+          type: string
+          description: OTel trace id.
     Health:
       type: object
-      required: [status]
+      required:
+      - status
       properties:
-        status: { type: string, enum: [ok, degraded] }
+        status:
+          type: string
+          enum:
+          - ok
+          - degraded
     PageMeta:
       type: object
-      required: [next_cursor]
+      required:
+      - next_cursor
       properties:
         next_cursor:
-          type: [string, 'null']
+          type:
+          - string
+          - 'null'
           description: Null when no more pages.
     ModuleName:
       type: string
-      pattern: '^[a-z][a-z0-9-]{1,62}$'
+      pattern: ^[a-z][a-z0-9-]{1,62}$
       description: Module id as used in ModuleManifest.id.
     SemVer:
       type: string
-      pattern: '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$'
+      pattern: ^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$
     Sha256Hex:
       type: string
-      pattern: '^[0-9a-f]{64}$'
+      pattern: ^[0-9a-f]{64}$
     AgentStatus:
       type: integer
-      enum: [1, 2, 3]
-      description: '1=active, 2=stale (no poll within max_stale), 3=revoked.'
+      enum:
+      - 1
+      - 2
+      - 3
+      description: 1=active, 2=stale (no poll within max_stale), 3=revoked.
     ModuleStatus:
       type: integer
-      enum: [1, 2]
-      description: '1=available, 2=yanked.'
+      enum:
+      - 1
+      - 2
+      description: 1=available, 2=yanked.
     FlagScope:
       type: integer
-      enum: [1, 2]
-      description: '1=tenant, 2=group.'
+      enum:
+      - 1
+      - 2
+      description: 1=tenant, 2=group.
     ApplyResult:
       type: integer
-      enum: [1, 2, 3]
-      description: '1=applied, 2=partial (some modules failed), 3=rejected.'
+      enum:
+      - 1
+      - 2
+      - 3
+      description: 1=applied, 2=partial (some modules failed), 3=rejected.
     Platform:
       type: integer
-      enum: [1, 2, 3]
-      description: '1=linux, 2=macos, 3=windows.'
-
+      enum:
+      - 1
+      - 2
+      - 3
+      description: 1=linux, 2=macos, 3=windows.
     ConfigPolicy:
       type: object
-      description: |
-        Restrict-only policy. Merge across groups: allowed_tools = intersection,
+      description: 'Restrict-only policy. Merge across groups: allowed_tools = intersection,
+
         numeric limits = minimum; agent override replaces the merged value per field.
+
+        '
       properties:
         allowed_tools:
-          type: [array, 'null']
+          type:
+          - array
+          - 'null'
           description: Null = unrestricted (license decides).
           maxItems: 512
-          items: { type: string, maxLength: 128 }
+          items:
+            type: string
+            maxLength: 128
         limits:
           $ref: '#/components/schemas/Limits'
         settings:
@@ -897,93 +1445,165 @@ components:
       type: object
       description: Numeric ceilings; absent = no hub ceiling.
       properties:
-        max_memory_mb: { type: integer, minimum: 1 }
-        max_fuel: { type: integer, minimum: 1 }
-        max_tool_calls_per_min: { type: integer, minimum: 1 }
-        max_concurrent_instances: { type: integer, minimum: 1 }
-        poll_interval_s: { type: integer, minimum: 60, maximum: 86400 }
-        max_stale_s: { type: integer, minimum: 300 }
-
+        max_memory_mb:
+          type: integer
+          minimum: 1
+        max_fuel:
+          type: integer
+          minimum: 1
+        max_tool_calls_per_min:
+          type: integer
+          minimum: 1
+        max_concurrent_instances:
+          type: integer
+          minimum: 1
+        poll_interval_s:
+          type: integer
+          minimum: 60
+          maximum: 86400
+        max_stale_s:
+          type: integer
+          minimum: 300
     Group:
       type: object
-      required: [id, name, policy, agent_count, created_at, updated_at]
+      required:
+      - id
+      - name
+      - policy
+      - agent_count
+      - created_at
+      - updated_at
       properties:
-        id: { type: string, format: uuid }
-        name: { type: string }
-        description: { type: string }
-        policy: { $ref: '#/components/schemas/ConfigPolicy' }
-        agent_count: { type: integer, minimum: 0 }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        policy:
+          $ref: '#/components/schemas/ConfigPolicy'
+        agent_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     GroupCreate:
       type: object
-      required: [name]
+      required:
+      - name
       additionalProperties: false
       properties:
-        name: { type: string, minLength: 1, maxLength: 128 }
-        description: { type: string, maxLength: 1024 }
-        policy: { $ref: '#/components/schemas/ConfigPolicy' }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 1024
+        policy:
+          $ref: '#/components/schemas/ConfigPolicy'
     GroupUpdate:
       type: object
       additionalProperties: false
       minProperties: 1
       properties:
-        name: { type: string, minLength: 1, maxLength: 128 }
-        description: { type: string, maxLength: 1024 }
-        policy: { $ref: '#/components/schemas/ConfigPolicy' }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 1024
+        policy:
+          $ref: '#/components/schemas/ConfigPolicy'
     GroupPage:
       allOf:
-        - $ref: '#/components/schemas/PageMeta'
-        - type: object
-          required: [items]
-          properties:
+      - $ref: '#/components/schemas/PageMeta'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
             items:
-              type: array
-              items: { $ref: '#/components/schemas/Group' }
+              $ref: '#/components/schemas/Group'
     MemberSet:
       type: object
-      required: [agent_ids]
+      required:
+      - agent_ids
       additionalProperties: false
       properties:
         agent_ids:
           type: array
           maxItems: 10000
           uniqueItems: true
-          items: { type: string, format: uuid }
-
+          items:
+            type: string
+            format: uuid
     Agent:
       type: object
-      required: [id, status, platform, group_ids, enrolled_at]
+      required:
+      - id
+      - status
+      - platform
+      - group_ids
+      - enrolled_at
       properties:
-        id: { type: string, format: uuid }
-        status: { $ref: '#/components/schemas/AgentStatus' }
-        platform: { $ref: '#/components/schemas/Platform' }
-        agent_version: { $ref: '#/components/schemas/SemVer' }
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        agent_version:
+          $ref: '#/components/schemas/SemVer'
         group_ids:
           type: array
-          items: { type: string, format: uuid }
-        last_seen_at: { type: [string, 'null'], format: date-time }
-        applied_etag: { type: [string, 'null'] }
-        enrolled_at: { type: string, format: date-time }
+          items:
+            type: string
+            format: uuid
+        last_seen_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        applied_etag:
+          type:
+          - string
+          - 'null'
+        enrolled_at:
+          type: string
+          format: date-time
     AgentDetail:
       allOf:
-        - $ref: '#/components/schemas/Agent'
-        - type: object
-          required: [effective]
-          properties:
-            override: { $ref: '#/components/schemas/ConfigPolicy' }
-            effective: { $ref: '#/components/schemas/ConfigPolicy' }
-            last_report: { $ref: '#/components/schemas/StatusReport' }
+      - $ref: '#/components/schemas/Agent'
+      - type: object
+        required:
+        - effective
+        properties:
+          override:
+            $ref: '#/components/schemas/ConfigPolicy'
+          effective:
+            $ref: '#/components/schemas/ConfigPolicy'
+          last_report:
+            $ref: '#/components/schemas/StatusReport'
     AgentPage:
       allOf:
-        - $ref: '#/components/schemas/PageMeta'
-        - type: object
-          required: [items]
-          properties:
+      - $ref: '#/components/schemas/PageMeta'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
             items:
-              type: array
-              items: { $ref: '#/components/schemas/Agent' }
-
+              $ref: '#/components/schemas/Agent'
     BootstrapTokenCreate:
       type: object
       additionalProperties: false
@@ -992,57 +1612,105 @@ components:
           type: array
           description: Groups the enrolling agent joins.
           maxItems: 64
-          items: { type: string, format: uuid }
-        ttl_s: { type: integer, minimum: 60, maximum: 604800, default: 86400 }
+          items:
+            type: string
+            format: uuid
+        ttl_s:
+          type: integer
+          minimum: 60
+          maximum: 604800
+          default: 86400
     BootstrapToken:
       type: object
-      required: [id, expires_at, used]
+      required:
+      - id
+      - expires_at
+      - used
       properties:
-        id: { type: string, format: uuid }
+        id:
+          type: string
+          format: uuid
         group_ids:
           type: array
-          items: { type: string, format: uuid }
-        expires_at: { type: string, format: date-time }
-        used: { type: boolean }
-        used_by_agent_id: { type: [string, 'null'], format: uuid }
+          items:
+            type: string
+            format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        used:
+          type: boolean
+        used_by_agent_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
     BootstrapTokenSecret:
       allOf:
-        - $ref: '#/components/schemas/BootstrapToken'
-        - type: object
-          required: [token]
-          properties:
-            token:
-              type: string
-              writeOnly: false
-              description: Plaintext secret, returned once; hub stores only a hash.
+      - $ref: '#/components/schemas/BootstrapToken'
+      - type: object
+        required:
+        - token
+        properties:
+          token:
+            type: string
+            writeOnly: false
+            description: Plaintext secret, returned once; hub stores only a hash.
     BootstrapTokenPage:
       allOf:
-        - $ref: '#/components/schemas/PageMeta'
-        - type: object
-          required: [items]
-          properties:
+      - $ref: '#/components/schemas/PageMeta'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
             items:
-              type: array
-              items: { $ref: '#/components/schemas/BootstrapToken' }
-
+              $ref: '#/components/schemas/BootstrapToken'
     Module:
       type: object
-      required: [id, module_id, version, sha256, signature, status, size_bytes, created_at]
+      required:
+      - id
+      - module_id
+      - version
+      - sha256
+      - signature
+      - status
+      - size_bytes
+      - created_at
       properties:
-        id: { type: string, format: uuid }
-        module_id: { $ref: '#/components/schemas/ModuleName' }
-        version: { $ref: '#/components/schemas/SemVer' }
-        sha256: { $ref: '#/components/schemas/Sha256Hex' }
-        signature: { type: string, description: minisign signature (base64 text). }
-        status: { $ref: '#/components/schemas/ModuleStatus' }
-        size_bytes: { type: integer, minimum: 1 }
-        created_at: { type: string, format: date-time }
+        id:
+          type: string
+          format: uuid
+        module_id:
+          $ref: '#/components/schemas/ModuleName'
+        version:
+          $ref: '#/components/schemas/SemVer'
+        sha256:
+          $ref: '#/components/schemas/Sha256Hex'
+        signature:
+          type: string
+          description: minisign signature (base64 text).
+        status:
+          $ref: '#/components/schemas/ModuleStatus'
+        size_bytes:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
     ModuleUpload:
       type: object
-      required: [module_id, version, signature, binary]
+      required:
+      - module_id
+      - version
+      - signature
+      - binary
       properties:
-        module_id: { $ref: '#/components/schemas/ModuleName' }
-        version: { $ref: '#/components/schemas/SemVer' }
+        module_id:
+          $ref: '#/components/schemas/ModuleName'
+        version:
+          $ref: '#/components/schemas/SemVer'
         sha256:
           $ref: '#/components/schemas/Sha256Hex'
         signature:
@@ -1054,140 +1722,264 @@ components:
           description: WASM binary (max 64 MiB).
     ModuleStatusUpdate:
       type: object
-      required: [status]
+      required:
+      - status
       additionalProperties: false
       properties:
-        status: { $ref: '#/components/schemas/ModuleStatus' }
+        status:
+          $ref: '#/components/schemas/ModuleStatus'
     ModulePage:
       allOf:
-        - $ref: '#/components/schemas/PageMeta'
-        - type: object
-          required: [items]
-          properties:
+      - $ref: '#/components/schemas/PageMeta'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
             items:
-              type: array
-              items: { $ref: '#/components/schemas/Module' }
+              $ref: '#/components/schemas/Module'
     ModuleAssignmentInput:
       type: object
-      required: [module_version_id]
+      required:
+      - module_version_id
       additionalProperties: false
       properties:
-        module_version_id: { type: string, format: uuid }
+        module_version_id:
+          type: string
+          format: uuid
     ModuleAssignment:
       type: object
-      required: [module_version_id, module_id, version]
+      required:
+      - module_version_id
+      - module_id
+      - version
       properties:
-        module_version_id: { type: string, format: uuid }
-        module_id: { $ref: '#/components/schemas/ModuleName' }
-        version: { $ref: '#/components/schemas/SemVer' }
+        module_version_id:
+          type: string
+          format: uuid
+        module_id:
+          $ref: '#/components/schemas/ModuleName'
+        version:
+          $ref: '#/components/schemas/SemVer'
     ModuleManifest:
       type: object
       description: Exactly the shape penguin-wasm-host fetcher.rs deserialises.
-      required: [id, version, sha256, signature, binary_url]
+      required:
+      - id
+      - version
+      - sha256
+      - signature
+      - binary_url
       properties:
-        id: { $ref: '#/components/schemas/ModuleName' }
-        version: { $ref: '#/components/schemas/SemVer' }
-        sha256: { $ref: '#/components/schemas/Sha256Hex' }
-        signature: { type: string }
+        id:
+          $ref: '#/components/schemas/ModuleName'
+        version:
+          $ref: '#/components/schemas/SemVer'
+        sha256:
+          $ref: '#/components/schemas/Sha256Hex'
+        signature:
+          type: string
         binary_url:
           type: string
           format: uri
-          description: Absolute URL of /agent/v1/modules/{id}/binary.
-
+          description: Absolute URL of /api/v1/agent/modules/{id}/binary.
     Flag:
       type: object
-      required: [id, key, enabled, scope]
+      required:
+      - id
+      - key
+      - enabled
+      - scope
       properties:
-        id: { type: string, format: uuid }
+        id:
+          type: string
+          format: uuid
         key:
           type: string
-          pattern: '^[a-z0-9-]+\.[a-z0-9.-]+$'
+          pattern: ^[a-z0-9-]+\.[a-z0-9.-]+$
           description: '`{product}.{feature}`.'
         enabled:
           type: boolean
           description: false = force off; true = defer to license (never grants).
-        scope: { $ref: '#/components/schemas/FlagScope' }
-        group_id: { type: [string, 'null'], format: uuid }
-        updated_at: { type: string, format: date-time }
+        scope:
+          $ref: '#/components/schemas/FlagScope'
+        group_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
     FlagInput:
       type: object
-      required: [key, enabled, scope]
+      required:
+      - key
+      - enabled
+      - scope
       additionalProperties: false
       properties:
         key:
           type: string
-          pattern: '^[a-z0-9-]+\.[a-z0-9.-]+$'
-        enabled: { type: boolean }
-        scope: { $ref: '#/components/schemas/FlagScope' }
-        group_id: { type: string, format: uuid }
+          pattern: ^[a-z0-9-]+\.[a-z0-9.-]+$
+        enabled:
+          type: boolean
+        scope:
+          $ref: '#/components/schemas/FlagScope'
+        group_id:
+          type: string
+          format: uuid
     FlagPage:
       allOf:
-        - $ref: '#/components/schemas/PageMeta'
-        - type: object
-          required: [items]
-          properties:
+      - $ref: '#/components/schemas/PageMeta'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
             items:
-              type: array
-              items: { $ref: '#/components/schemas/Flag' }
-
+              $ref: '#/components/schemas/Flag'
     EnrollRequest:
       type: object
-      required: [platform, agent_version]
+      required:
+      - platform
+      - agent_version
       additionalProperties: false
       properties:
-        platform: { $ref: '#/components/schemas/Platform' }
-        agent_version: { $ref: '#/components/schemas/SemVer' }
+        platform:
+          $ref: '#/components/schemas/Platform'
+        agent_version:
+          $ref: '#/components/schemas/SemVer'
         csr_pem:
           type: string
           description: Optional CSR for a hub-issued client cert where SPIRE is absent (open question).
     RefreshRequest:
       type: object
-      required: [refresh_token]
+      required:
+      - refresh_token
       additionalProperties: false
       properties:
-        refresh_token: { type: string }
+        refresh_token:
+          type: string
     TokenResponse:
       type: object
-      required: [agent_id, access_token, token_type, expires_in, refresh_token]
+      required:
+      - agent_id
+      - access_token
+      - token_type
+      - expires_in
+      - refresh_token
       properties:
-        agent_id: { type: string, format: uuid }
-        access_token: { type: string }
-        token_type: { type: string, enum: [Bearer] }
-        expires_in: { type: integer, maximum: 3600 }
-        refresh_token: { type: string }
-
+        agent_id:
+          type: string
+          format: uuid
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum:
+          - Bearer
+        expires_in:
+          type: integer
+          maximum: 3600
+        refresh_token:
+          type: string
     SyncBundle:
       type: object
-      required: [agent_id, generated_at, policy, flags, modules, poll_interval_s, max_stale_s]
+      required:
+      - agent_id
+      - generated_at
+      - policy
+      - flags
+      - modules
+      - poll_interval_s
+      - max_stale_s
       properties:
-        agent_id: { type: string, format: uuid }
-        generated_at: { type: string, format: date-time }
-        policy: { $ref: '#/components/schemas/ConfigPolicy' }
+        agent_id:
+          type: string
+          format: uuid
+        generated_at:
+          type: string
+          format: date-time
+        policy:
+          $ref: '#/components/schemas/ConfigPolicy'
         flags:
           type: object
           description: Hub flag restrictions; agent computes effective = license && hub.
-          additionalProperties: { type: boolean }
+          additionalProperties:
+            type: boolean
         modules:
           type: array
-          items: { $ref: '#/components/schemas/ModuleManifest' }
-        poll_interval_s: { type: integer, minimum: 60 }
-        max_stale_s: { type: integer, minimum: 300 }
+          items:
+            $ref: '#/components/schemas/ModuleManifest'
+        poll_interval_s:
+          type: integer
+          minimum: 60
+        max_stale_s:
+          type: integer
+          minimum: 300
     StatusReport:
       type: object
-      required: [applied_etag, result, modules]
+      required:
+      - applied_etag
+      - result
+      - modules
       additionalProperties: false
       properties:
-        applied_etag: { type: string }
-        result: { $ref: '#/components/schemas/ApplyResult' }
-        agent_version: { $ref: '#/components/schemas/SemVer' }
+        applied_etag:
+          type: string
+        result:
+          $ref: '#/components/schemas/ApplyResult'
+        agent_version:
+          $ref: '#/components/schemas/SemVer'
         modules:
           type: array
           maxItems: 256
           items:
             type: object
-            required: [id, version, loaded]
+            required:
+            - id
+            - version
+            - loaded
             properties:
-              id: { $ref: '#/components/schemas/ModuleName' }
-              version: { $ref: '#/components/schemas/SemVer' }
-              loaded: { type: boolean }
-              error_code: { type: integer }
+              id:
+                $ref: '#/components/schemas/ModuleName'
+              version:
+                $ref: '#/components/schemas/SemVer'
+              loaded:
+                type: boolean
+              error_code:
+                type: integer
+    Meta:
+      type: object
+      required:
+      - version
+      - timestamp
+      properties:
+        version:
+          type: integer
+          description: API major version.
+        timestamp:
+          type: string
+          format: date-time
+        trace_id:
+          type: string
+          description: OTel trace id.
+    Envelope:
+      type: object
+      description: Standard response envelope (backend.md). Raw binary and 304 responses are not wrapped.
+      required:
+      - status
+      - data
+      - meta
+      properties:
+        status:
+          type: string
+          enum:
+          - success
+          - error
+        data: {}
+        meta:
+          $ref: '#/components/schemas/Meta'
