@@ -16,12 +16,25 @@ agent: POST /api/v1/agent/token   (refresh_token)       → new pair; old refres
 
 | Mechanism | When | Notes |
 |---|---|---|
-| SPIFFE mTLS (X.509-SVID) | SPIRE deployed | `spiffe://penguintech.io/<env>/penguind/<agent_id>`; preferred |
-| Machine JWT (bearer) | no SPIRE | `sub`=agent_id, `tenant`, scopes `hub:agent:sync`, `hub:agent:report` |
+| SPIFFE mTLS (X.509-SVID) | SPIRE deployed; XFCC from a trusted ingress only | `spiffe://<trust-domain>/tenant/<tenant public_id>/agent/<id>`; preferred |
+| Machine JWT (bearer) | no SPIRE | `sub`=agent_id, `tenant`=tenant public_id UUID, scopes `hub:agent:sync`, `hub:agent:report` |
 
+- mTLS trust: the ingress must overwrite XFCC (Envoy `forward_client_cert_details: SANITIZE_SET`). The hub accepts exactly one XFCC header line (any name casing; two lines = reject) holding one element with one `spiffe://` URI, only from a peer in `HUB_TRUSTED_PROXY_CIDRS` with `HUB_TRUST_FORWARDED_CERT=1`, and only when the URI exactly matches a registered agent (`POST /api/v1/agents`). Agent ids are never taken from paths.
+- SPIFFE URI shape is enforced: `spiffe://<trust-domain>/tenant/<tenant public_id>/agent/<id>`; the trust domain must equal `HUB_SPIFFE_TRUST_DOMAIN`, the tenant segment must be the canonical UUID of the tenant that owns the registered row (mismatch = 401), `<id>` is one path-safe segment. `agents.spiffe_id` is unique across ALL tenants (DB constraint plus a global check at registration; ambiguous lookups fail closed).
+- Tenant identity everywhere on the wire (admin token `tenant` claim, machine JWT `tenant` claim, SPIFFE tenant segment, object keys) is the tenant public_id UUID; the hub maps it to its internal numeric id (`tenants` table) and never exposes the number.
 - Bootstrap token: single use, TTL ≤7d, consumed atomically; reuse → 401
 - Refresh reuse → whole chain revoked (compromise signal); agent must re-enroll
 - Tokens in OS keychain/secret store only, never plaintext files
+
+### Credential storage
+
+| Run mode (`PENGUIND_RUN_MODE`) | Preferred store | Notes |
+|---|---|---|
+| `desktop` | OS keychain (`keyring`) | |
+| `daemonset` | Kubernetes Secret, read from `PENGUIND_HUB_TOKEN_FILE` (projected volume, `defaultMode: 0400`) | Rotated tokens written back via the K8s API only when the pod SA may update the Secret; otherwise kept in memory and the agent re-bootstraps after restart. Never written to a file outside the mount; group/world-readable mount refused |
+| `server` (default) | OS keychain | |
+
+**Exception — encrypted-file fallback (any mode):** used only when the preferred store is unavailable. Logs a WARN and sets `penguind_hub_token_store_active{store="encrypted-file"}=1` (gauge carries the active store for every mode).
 
 ## Poll Loop
 
@@ -48,7 +61,7 @@ every poll_interval_s (default 300) ± 10% jitter:
 5. Hub never signs; a compromised hub can withhold or roll back, never inject code
 6. Yanked versions disappear from the bundle; agent unloads them on next apply
 
-Rollback protection: agent refuses a version lower than the highest it has verified for the same id unless the bundle drops the id entirely (then unload).
+Rollback protection: agent refuses a version lower than the highest it has verified for the same id. The monotonic high-water mark persists (`hub-highwater.json`), survives the hub dropping the id (module unloaded, mark kept) and revocation wipes; only an explicit local operator reset (`HubClient::reset_high_water`) lowers it.
 
 ## Effective Config & Limits Clamp
 
@@ -78,6 +91,10 @@ effective   = clamp(hub_policy, license)
 - Age > `max_stale_s` (bundle-provided; default TBD — open question) → fall back to restrictive state: hub-delivered modules stay loaded only if `<module>` is license-entitled; config reverts to license defaults; status surfaced in tray/CLI as "hub stale since <ts>"
 - Never-seen flags default OFF; cached flags last-known
 - Restart with no cache and no hub → license defaults only, no hub modules
+
+## Rate Limiting (v1 limit)
+
+Auth and agent endpoints are limited per client key by an in-process sliding window (`HUB_RATE_LIMIT_PER_MIN`, default 60). The limit is **per replica**: the hub is stateless and has no shared store, so N replicas allow up to N times the configured rate. No shared limiter is published in the penguin-libs package index (`penguin-limiter` exists only in the repo, unpublished), so a shared limiter is deferred until one is published; treat the configured value as a per-replica ceiling.
 
 ## Telemetry
 

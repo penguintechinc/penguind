@@ -61,6 +61,8 @@ penguin-desktop-core = { path = "crates/penguin-desktop-core" }
 penguin-secrets = { path = "crates/penguin-secrets" }
 # wasmtime-hosted WASM modules that call the daemon via `call_tool`.
 penguin-wasm-host = { path = "crates/penguin-wasm-host" }
+# Hub sync client: enrollment, ETag poll loop, offline cache, limits clamp.
+penguin-hub-client = { path = "crates/penguin-hub-client" }
 
 # gRPC / protobuf. Wire-compatibility with the Go daemon and go-plugin is the
 # whole point of the rewrite, so these are pinned exactly.

@@ -81,7 +81,7 @@ COVER_EXCLUDE_BOUNDARY := (penguin-ipc/src/(listen|dial)_(unix|windows)\.rs|peng
 COVER_IGNORE_UNIT := $(COVER_EXCLUDE_ALWAYS)|$(COVER_EXCLUDE_BOUNDARY)
 COVER_IGNORE_INT := $(COVER_EXCLUDE_ALWAYS)
 
-.PHONY: help setup build test test-unit test-integration test-integration-cover \
+.PHONY: help setup build test test-unit test-integration test-integration-cover test-e2e-hub \
         lint format test-security smoke-test test-telemetry clean proto \
         pre-commit parity docker-image docker-volumes tools install-hooks verify-hooks
 
@@ -111,6 +111,9 @@ test-unit: tools ## Unit tests with the $(COVER_MIN)% line-coverage gate
 	$(CARGO) llvm-cov --workspace --locked \
 		--ignore-filename-regex '$(COVER_IGNORE_UNIT)' \
 		--fail-under-lines $(COVER_MIN)
+
+test-e2e-hub: ## Hub API E2E: real hub + pdcli + hub-client + wasm host (Docker: Postgres, MinIO)
+	./tests/e2e/hub_api/run.sh
 
 test-integration: ## Integration tests (marked #[ignore], need PENGUIN_INTEGRATION=1)
 	PENGUIN_INTEGRATION=1 $(CARGO) test --workspace --locked -- --ignored

@@ -27,7 +27,7 @@ from tests.models.factories import SUB, agent, group, module
 
 def test_every_table_has_identity_columns() -> None:
     """Every entity table has BIGINT id, unique UUID public_id, tenant_id and timestamps."""
-    assert len(ENTITY_TABLES) == 9
+    assert len(ENTITY_TABLES) == 10
     for name in ENTITY_TABLES:
         cols = metadata.tables[name].c
         assert cols.id.primary_key and str(cols.id.type) == "BIGINT", name
@@ -132,6 +132,7 @@ def test_all_tables_insertable(tdb: TenantDB) -> None:
     )
     tdb.insert("refresh_tokens", agent_id=a.id, hash="h", chain_id=uuid.uuid4())
     tdb.insert("tenant_configs", policy={"limits": {"max_fuel": 5}})
+    tdb.insert("audit_events", action=1, target_type=1, target_public_id=g.public_id, actor=SUB)
     assert {t: tdb.count(t) for t in ENTITY_TABLES} == dict.fromkeys(ENTITY_TABLES, 1) | {
         "flags": 2
     }

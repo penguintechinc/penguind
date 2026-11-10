@@ -30,3 +30,15 @@ clap = { workspace = true, features = ["string"] }
 tonic.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# `pdcli hub`: sha256 of the uploaded wasm (same message the offline signer
+# signs), optional local minisign verification (exact pin shared with
+# penguin-update/extplugin), URL joining + form encoding, and JWT claim
+# decoding for `whoami`. All already in Cargo.lock — no new crates.
+sha2.workspace = true
+minisign-verify = "=0.2.5"
+url.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+# Test-only signing of fixture manifests; same pin as penguin-update.
+minisign = "=0.9.1"

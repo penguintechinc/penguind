@@ -15,6 +15,8 @@
 
 #[cfg(unix)]
 mod cli;
+#[cfg(unix)]
+mod hub;
 
 #[cfg(unix)]
 #[tokio::main]

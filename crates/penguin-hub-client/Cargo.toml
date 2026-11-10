@@ -1,0 +1,37 @@
+[package]
+name = "penguin-hub-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+penguin-sdk.workspace = true
+# Fetch/verify path (SSRF-guarded HubFetcher, VerifiedModule) and ModuleLimits.
+penguin-wasm-host.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+prometheus.workspace = true
+rand.workspace = true
+semver.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+# Test-only minisign signing (production only verifies); same pin as penguin-daemon.
+minisign = "=0.9.1"
+sha2.workspace = true
+# Local TLS mock hub built from the v1.yaml shapes.
+rcgen.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true

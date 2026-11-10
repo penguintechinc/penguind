@@ -90,6 +90,7 @@ pub fn build_static_root() -> Command {
                         .action(ArgAction::SetTrue),
                 ),
         )
+        .subcommand(crate::hub::build_hub_command())
 }
 
 /// Every name a module cannot use without colliding with a static verb.
@@ -100,8 +101,8 @@ pub fn build_static_root() -> Command {
 /// assertion time for a duplicate name, so a colliding module is skipped
 /// here rather than risking that panic. Not required by any test in the M4
 /// gate; recorded as a divergence in `docs/PARITY.md`.
-const RESERVED_STATIC_VERBS: [&str; 7] = [
-    "version", "modules", "load", "unload", "status", "logs", "update",
+const RESERVED_STATIC_VERBS: [&str; 8] = [
+    "version", "modules", "load", "unload", "status", "logs", "update", "hub",
 ];
 
 /// Grafts one top-level [`Command`] per module onto `root`, each carrying

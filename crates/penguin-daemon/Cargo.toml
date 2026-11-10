@@ -24,6 +24,10 @@ penguin-telemetry.workspace = true
 # wasmtime host: backs `HostServices::call_tool` and the wasm module runner,
 # both gated by the `penguind.wasm-modules` flag.
 penguin-wasm-host.workspace = true
+# Hub sync client (enroll, ETag poll, offline cache, limits clamp); spawned
+# behind the `penguind.hub-client` flag from `hub.rs`.
+penguin-hub-client.workspace = true
+prometheus.workspace = true
 penguin-extplugin.workspace = true
 penguin-goplugin-host.workspace = true
 # waddlebot module: needed for the session proxy registry access in the daemon service.
@@ -67,3 +71,10 @@ penguin-module-tobogganing.workspace = true
 prometheus.workspace = true
 # WAT -> wasm fixtures for the wasm module runner tests (`src/wasm.rs`).
 wat.workspace = true
+
+# Hub E2E agent driver (tests/e2e/hub_api): the real hub client + daemon wasm
+# path, driven by the pytest harness over stdin/stdout. Built only by
+# `make test-e2e-hub`; uses dev-dependencies (minisign, wat, sha2, tempfile).
+[[example]]
+name = "hub_e2e_agent"
+path = "../../tests/e2e/hub_api/agent/main.rs"

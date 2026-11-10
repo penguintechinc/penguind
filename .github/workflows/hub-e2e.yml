@@ -1,0 +1,52 @@
+# Hub API end-to-end (T6, docs/superpowers/plans/2026-11-10-hub-api.md).
+#
+# Real hub (Quart/hypercorn, Postgres via testcontainers), real `pdcli hub`, real
+# penguin-hub-client sync and the daemon's run_fetched_wasm path. Only the OIDC issuer
+# (local JWKS signer) and S3 (MinIO) are doubles. `make test-e2e-hub` fails when zero
+# checks run, any check fails, or the hub's OTLP sink receives no logs, metrics or
+# histograms. Release-bound PRs run on the dal2alpha runner group (same routing
+# expression as PR #78); main/fork/tag/release runs stay on GitHub-hosted runners.
+# Actions and images pinned to immutable references.
+name: hub-e2e
+
+on:
+  pull_request:
+    branches: [feature/hub-api, "release/**"]
+    paths:
+      - "services/hub-api/**"
+      - "tests/e2e/hub_api/**"
+      - "crates/**"
+      - "bins/pdcli/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Makefile"
+      - ".github/workflows/hub-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hub-e2e:
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
+    timeout-minutes: 45
+    container:
+      image: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
+      # testcontainers (Postgres, MinIO) talks to the runner's Docker daemon.
+      options: -v /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: system packages
+        # protoc for penguin-proto; dbus + gnome-keyring give pdcli a real Secret Service
+        # keychain inside a private session (run.sh), never a plaintext token file.
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev \
+            dbus gnome-keyring python3-pip
+      - name: uv (hash-pinned)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --break-system-packages --require-hashes \
+            -r tests/e2e/hub_api/requirements-ci.txt
+      - name: hub e2e
+        run: make test-e2e-hub
