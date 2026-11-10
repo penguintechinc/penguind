@@ -42,12 +42,21 @@ config:
   HUB_S3_BUCKET: ""
   HUB_S3_REGION: ""
   HUB_TRUSTED_PUBKEYS: ""   # minisign public keys (public, not secret)
+  # mTLS identity from XFCC. Trust needs BOTH: HUB_TRUST_FORWARDED_CERT="1" AND the TCP peer
+  # inside HUB_TRUSTED_PROXY_CIDRS (empty = refuse). The ingress MUST overwrite the header:
+  # Envoy forward_client_cert_details: SANITIZE_SET. Otherwise clients can inject XFCC.
+  HUB_TRUST_FORWARDED_CERT: "0"
+  # Agent SVIDs must be spiffe://<this domain>/tenant/<tenant public_id>/agent/<id>; any other
+  # trust domain is refused. Required at boot (the hub fails loudly when unset).
+  HUB_SPIFFE_TRUST_DOMAIN: "penguintech.io"
+  HUB_TRUSTED_PROXY_CIDRS: ""   # e.g. "10.42.0.0/16" (ingress-nginx / Envoy pod CIDR)
 
 # References to pre-existing Secrets. Never put values here.
 secrets:
   db:   {name: "", key: dsn}
   s3:   {name: "", accessKeyKey: access-key-id, secretKeyKey: secret-access-key}
   oidc: {name: "", issuerKey: issuer-url, audienceKey: audience}
+  agentJwt: {name: "", key: signing-key}   # HS256 key for agent machine JWTs (>=32 chars)
 
 # OTLP destination comes from standard OTEL_* vars; nothing is hardcoded.
 otel:

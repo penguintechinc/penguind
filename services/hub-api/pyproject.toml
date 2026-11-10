@@ -8,6 +8,20 @@ dependencies = [
     "sqlalchemy==2.1.8",
     "alembic==1.20.1",
     "psycopg2-binary==2.9.13",
+    "quart==0.20.0",
+    "quart-schema==0.22.0",
+    "pydantic==2.14.3",
+    "hypercorn==0.17.3",
+    "penguin-utils==0.3.0",
+    "penguin-aaa==0.2.1",
+    "boto3==1.44.0",
+    "pyjwt==2.15.1",
+    "cryptography==50.0.2",
+    "httpx==0.28.1",
+    "posthog==7.86.6",
+    "opentelemetry-sdk==1.45.2",
+    "opentelemetry-exporter-otlp-proto-grpc==1.45.2",
+    "opentelemetry-exporter-otlp-proto-http==1.45.2",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +31,9 @@ dev = [
     "testcontainers[postgres]==4.15.0",
     "mypy==2.4.1",
     "ruff==0.17.4",
+    "pytest-asyncio==1.4.1",
+    "moto[s3]==5.2.5",
+    "bandit==1.9.2",
 ]
 
 [build-system]
@@ -41,9 +58,10 @@ strict = true
 python_version = "3.13"
 
 [[tool.mypy.overrides]]
-module = ["penguin_dal.*", "testcontainers.*"]
+module = ["penguin_dal.*", "testcontainers.*", "boto3.*", "botocore.*", "moto.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=app/models --cov-branch --cov-report=term-missing --cov-fail-under=90"
+asyncio_mode = "auto"
+addopts = "--cov=app --cov-branch --cov-report=term-missing --cov-fail-under=90"
