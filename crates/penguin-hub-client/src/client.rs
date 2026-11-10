@@ -171,6 +171,22 @@ pub struct HubClient {
 }
 
 /// Unix seconds now, clamped to 0 before the epoch.
+/// Raises each mark in `into` to the max of itself and `from` (semver);
+/// an unparsable incoming mark never replaces a parsable one.
+fn merge_high_water(into: &mut BTreeMap<String, String>, from: &BTreeMap<String, String>) {
+    for (id, v) in from {
+        let higher = match (into.get(id).map(|c| Version::parse(c)), Version::parse(v)) {
+            (None, _) => true,
+            (Some(Ok(cur)), Ok(new)) => new > cur,
+            (Some(Err(_)), Ok(_)) => true,
+            (Some(_), Err(_)) => false,
+        };
+        if higher {
+            into.insert(id.clone(), v.clone());
+        }
+    }
+}
+
 fn system_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -232,6 +248,7 @@ impl HubClient {
         license: Arc<ClampedLicense>,
         metrics: HubMetrics,
     ) -> Self {
+        metrics.set_token_store(creds.kind());
         let now = system_now();
         let state = State {
             etag: None,
@@ -295,6 +312,10 @@ impl HubClient {
     /// agent in deny-all until the hub answers.
     pub async fn start(&self) -> StartStatus {
         let mut st = self.state.lock().await;
+        match self.cache.load_high_water() {
+            Ok(marks) => merge_high_water(&mut st.highest, &marks),
+            Err(e) => tracing::warn!(error = %e, "rollback high-water file unreadable"),
+        }
         let loaded = match self.cache.load() {
             CacheLoad::Missing => return StartStatus::Fresh,
             CacheLoad::Corrupt(reason) => {
@@ -308,7 +329,7 @@ impl HubClient {
         st.last_contact = Some(loaded.last_contact);
         st.poll_s = clamp_poll_interval(bundle.poll_interval_s);
         st.max_stale_s = clamp_max_stale(&self.cfg.ceiling, bundle.max_stale_s);
-        st.highest = loaded.highest.clone();
+        merge_high_water(&mut st.highest, &loaded.highest);
         self.license.set_hub_flags(bundle.flags.clone());
         let age = self.now().saturating_sub(loaded.last_contact);
         if age > i64::try_from(st.max_stale_s).unwrap_or(i64::MAX) {
@@ -644,7 +665,6 @@ impl HubClient {
         let dropped: Vec<String> = st
             .applied
             .keys()
-            .chain(st.highest.keys())
             .filter(|id| !seen.contains(*id))
             .cloned()
             .collect::<BTreeSet<_>>()
@@ -655,7 +675,8 @@ impl HubClient {
                 self.sink.unload(&id).await;
                 tracing::info!(module = %id, "module dropped by hub; unloaded");
             }
-            st.highest.remove(&id);
+            // The rollback high-water mark is kept: a later re-offer of an
+            // older version must still be refused.
         }
 
         let total = statuses.len();
@@ -853,6 +874,30 @@ impl HubClient {
         if let Err(e) = self.cache.save(&state) {
             tracing::warn!(error = %e, "could not write hub cache");
         }
+        self.persist_high_water(st);
+    }
+
+    /// Writes the monotonic rollback high-water marks.
+    fn persist_high_water(&self, st: &State) {
+        if let Err(e) = self.cache.save_high_water(&st.highest) {
+            tracing::warn!(error = %e, "could not write rollback high-water marks");
+        }
+    }
+
+    /// Explicit local operator action: forget the rollback high-water mark
+    /// for `id` (or all marks for `None`) so an older version may load again.
+    /// The hub can never trigger this.
+    pub async fn reset_high_water(&self, id: Option<&str>) -> Result<(), HubError> {
+        let mut st = self.state.lock().await;
+        self.cache.reset_high_water(id)?;
+        match id {
+            Some(id) => {
+                st.highest.remove(id);
+            }
+            None => st.highest.clear(),
+        }
+        tracing::warn!(module = ?id, "rollback high-water reset by local operator");
+        Ok(())
     }
 
     /// 410: unload everything the hub delivered and wipe credentials + cache.
@@ -864,7 +909,7 @@ impl HubClient {
             self.sink.unload(&id).await;
         }
         st.applied.clear();
-        st.highest.clear();
+        // Revocation never lowers the rollback high-water marks.
         st.etag = None;
         st.creds = None;
         st.bootstrap = None;
@@ -872,6 +917,7 @@ impl HubClient {
             tracing::warn!(error = %e, "could not clear stored credentials");
         }
         self.cache.clear();
+        self.persist_high_water(st);
         self.license.set_hub_flags(BTreeMap::new());
         SyncOutcome::Revoked
     }

@@ -4,13 +4,11 @@
 use std::fmt;
 use std::sync::Arc;
 
-use penguin_sdk::{SecretError, SecretStore};
+use penguin_sdk::SecretStore;
 use serde::{Deserialize, Serialize};
 
 use crate::error::HubError;
-
-/// Secret-store key holding the serialised [`Credentials`].
-const KEY: &str = "hub-credentials";
+use crate::tokens::{SecretTokenStore, TokenStore, TokenStoreKind};
 
 /// The machine JWT and rotating refresh token for this agent.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,42 +35,43 @@ impl fmt::Debug for Credentials {
     }
 }
 
-/// Loads, saves and clears [`Credentials`] in a [`SecretStore`].
+/// Loads, saves and clears [`Credentials`] through a [`TokenStore`].
 pub struct CredentialStore {
-    store: Arc<dyn SecretStore>,
+    store: Arc<dyn TokenStore>,
 }
 
 impl CredentialStore {
-    /// Wraps `store` (callers pass a namespaced view).
+    /// Wraps an encrypted-file [`SecretStore`] (callers pass a namespaced view).
     pub fn new(store: Arc<dyn SecretStore>) -> Self {
+        Self::from_token_store(Arc::new(SecretTokenStore::new(
+            store,
+            TokenStoreKind::EncryptedFile,
+        )))
+    }
+
+    /// Wraps a store picked by [`crate::tokens::select_token_store`].
+    pub fn from_token_store(store: Arc<dyn TokenStore>) -> Self {
         Self { store }
     }
 
-    /// Reads the credentials; `None` when never enrolled or cleared. An
-    /// unparsable record is treated as absent so the agent re-enrolls.
+    /// Which backend holds the tokens.
+    pub fn kind(&self) -> TokenStoreKind {
+        self.store.kind()
+    }
+
+    /// Reads the credentials; `None` when never enrolled or cleared.
     pub async fn load(&self) -> Result<Option<Credentials>, HubError> {
-        match self.store.get(KEY).await {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
-            Err(SecretError::NotFound) => Ok(None),
-            Err(e) => Err(HubError::Secrets(e.to_string())),
-        }
+        self.store.load().await
     }
 
     /// Persists the credentials.
     pub async fn save(&self, creds: &Credentials) -> Result<(), HubError> {
-        let bytes = serde_json::to_vec(creds).map_err(|e| HubError::Secrets(e.to_string()))?;
-        self.store
-            .set(KEY, &bytes)
-            .await
-            .map_err(|e| HubError::Secrets(e.to_string()))
+        self.store.save(creds).await
     }
 
     /// Removes the credentials; deleting an absent record is fine.
     pub async fn clear(&self) -> Result<(), HubError> {
-        match self.store.delete(KEY).await {
-            Ok(()) | Err(SecretError::NotFound) => Ok(()),
-            Err(e) => Err(HubError::Secrets(e.to_string())),
-        }
+        self.store.clear().await
     }
 }
 
@@ -82,6 +81,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
+    use penguin_sdk::SecretError;
 
     use super::*;
 
@@ -133,6 +133,7 @@ mod tests {
     #[tokio::test]
     async fn save_load_clear_round_trip() {
         let store = CredentialStore::new(Arc::new(Mem::default()));
+        assert_eq!(store.kind(), TokenStoreKind::EncryptedFile);
         assert_eq!(store.load().await.expect("load"), None);
         store.save(&creds()).await.expect("save");
         assert_eq!(store.load().await.expect("load"), Some(creds()));

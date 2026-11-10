@@ -1,4 +1,4 @@
-//! The poll loop: first poll immediately, then every interval ±20% jitter,
+//! The poll loop: first poll immediately, then every interval ±10% jitter (docs/hub-protocol.md),
 //! honouring `Retry-After` and backing off exponentially on failure.
 
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::client::{HubClient, SyncOutcome};
 
 /// Jitter fraction applied around the poll interval.
-pub const JITTER: f64 = 0.20;
+pub const JITTER: f64 = 0.10;
 /// First failure back-off step.
 const BACKOFF_BASE: Duration = Duration::from_secs(30);
 
@@ -72,11 +72,11 @@ mod tests {
     const I: Duration = Duration::from_secs(300);
 
     #[test]
-    fn jitter_stays_within_twenty_percent() {
+    fn jitter_stays_within_ten_percent() {
         for unit in [0.0, 0.25, 0.5, 0.999, 1.0] {
             let d = compute_delay(SyncOutcome::NotModified, I, 0, unit).expect("delay");
             assert!(
-                d >= Duration::from_secs(240) && d <= Duration::from_secs(360),
+                d >= Duration::from_secs(270) && d <= Duration::from_secs(330),
                 "{d:?}"
             );
         }

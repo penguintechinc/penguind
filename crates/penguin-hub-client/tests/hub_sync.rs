@@ -215,7 +215,7 @@ async fn revoked_module_is_unloaded_when_dropped_from_bundle() {
 }
 
 #[tokio::test]
-async fn rollback_to_lower_version_is_refused_but_drop_then_readd_is_allowed() {
+async fn rollback_to_lower_version_is_refused() {
     let env = Env::new().await;
     let v2 = env.hub.publish(&env.signer, "m", "2.0.0", WASM);
     env.hub.set_bundle(&[v2], json!({}), flags(&[]), "\"e1\"");
@@ -232,16 +232,62 @@ async fn rollback_to_lower_version_is_refused_but_drop_then_readd_is_allowed() {
         env.client.snapshot().await.applied,
         vec![("m".into(), "2.0.0".into())]
     );
-    // bundle drops the id entirely -> unload + forget; then 1.0.0 is allowed again.
-    env.hub.set_bundle(&[], json!({}), flags(&[]), "\"e3\"");
+}
+
+/// Regression (security review): dropping a module must not reset its
+/// rollback high-water mark — apply v2, hub drops it, hub re-offers v1 → refused,
+/// also across a restart; only an explicit local operator reset re-allows v1.
+#[tokio::test]
+async fn drop_then_reoffer_older_version_is_refused() {
+    let env = Env::new().await;
+    let v2 = env.hub.publish(&env.signer, "m", "2.0.0", WASM);
+    env.hub.set_bundle(&[v2], json!({}), flags(&[]), "\"e1\"");
+    assert_eq!(env.client.sync_once().await, SyncOutcome::Applied(1));
+    env.hub.set_bundle(&[], json!({}), flags(&[]), "\"e2\"");
     assert_eq!(env.client.sync_once().await, SyncOutcome::Applied(1));
     assert!(env.client.snapshot().await.applied.is_empty());
-    env.hub.set_bundle(&[v1], json!({}), flags(&[]), "\"e4\"");
+    let v1 = env.signer.manifest("m", "1.0.0", WASM, &env.hub.base_url);
+    env.hub
+        .set_bundle(std::slice::from_ref(&v1), json!({}), flags(&[]), "\"e3\"");
+    assert_eq!(env.client.sync_once().await, SyncOutcome::Applied(3));
+    assert_eq!(
+        status_body(&env)["modules"][0]["error_code"],
+        error_code::ROLLBACK
+    );
+    assert!(env.client.snapshot().await.applied.is_empty());
+
+    // The mark persists across a restart.
+    let env = env.restart(true).await;
+    env.client.start().await;
+    env.hub
+        .set_bundle(std::slice::from_ref(&v1), json!({}), flags(&[]), "\"e4\"");
+    assert_eq!(env.client.sync_once().await, SyncOutcome::Applied(3));
+    assert!(env.client.snapshot().await.applied.is_empty());
+
+    // Explicit local operator reset is the only way back down.
+    env.client.reset_high_water(Some("m")).await.expect("reset");
+    env.hub.set_bundle(&[v1], json!({}), flags(&[]), "\"e5\"");
     assert_eq!(env.client.sync_once().await, SyncOutcome::Applied(1));
     assert_eq!(
         env.client.snapshot().await.applied,
         vec![("m".into(), "1.0.0".into())]
     );
+    env.client.reset_high_water(None).await.expect("reset all");
+    assert!(!env.cache_dir().join("hub-highwater.json").exists());
+}
+
+/// A revocation wipe must not lower the rollback high-water marks.
+#[tokio::test]
+async fn revocation_does_not_lower_high_water() {
+    let env = Env::new().await;
+    let v2 = env.hub.publish(&env.signer, "m", "2.0.0", WASM);
+    env.hub.set_bundle(&[v2], json!({}), flags(&[]), "\"e1\"");
+    assert_eq!(env.client.sync_once().await, SyncOutcome::Applied(1));
+    env.hub.with(|k| k.revoked = true);
+    assert_eq!(env.client.sync_once().await, SyncOutcome::Revoked);
+    let raw = std::fs::read(env.cache_dir().join("hub-highwater.json")).expect("kept");
+    let marks: serde_json::Value = serde_json::from_slice(&raw).expect("json");
+    assert_eq!(marks["m"], "2.0.0");
 }
 
 #[tokio::test]

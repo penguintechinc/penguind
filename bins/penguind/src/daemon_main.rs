@@ -275,10 +275,37 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     // `SecretsStoreProvider` gives every module its own
     // `secrets_root.namespaced(module)` view, so `host_for` never hands two
     // modules the same store.
-    // Hub-client tokens live in the same encrypted secret store (never a plaintext
-    // file), under their own namespace.
-    let hub_secrets: Arc<dyn penguin_sdk::SecretStore> =
-        Arc::new(secrets_root.namespaced("hub-client"));
+    // Hub-client tokens: store chosen by run mode (desktop/server → OS keychain,
+    // daemonset → mounted K8s Secret), encrypted-file fallback (namespaced in
+    // the store above) only when the preferred one is unavailable. The keychain
+    // is probed only in desktop/server mode.
+    let run_mode = penguin_daemon::hub::run_mode_from(
+        std::env::var(penguin_daemon::hub::RUN_MODE_ENV)
+            .ok()
+            .as_deref(),
+    );
+    let keychain: Option<Arc<dyn penguin_sdk::SecretStore>> = match run_mode {
+        penguin_hub_client::RunMode::Daemonset => None,
+        penguin_hub_client::RunMode::Desktop | penguin_hub_client::RunMode::Server => {
+            match SecretsStore::open(SecretsConfig {
+                service_name: String::new(),
+                backend: SecretsBackend::PlatformOnly,
+            }) {
+                Ok(s) => Some(Arc::new(s.namespaced("hub-client"))),
+                Err(e) => {
+                    tracing::warn!(error = %e, "OS keychain unavailable for hub tokens");
+                    None
+                }
+            }
+        }
+    };
+    let token_file = penguin_daemon::hub::token_file_from_env();
+    let hub_tokens = penguin_daemon::hub::hub_token_store(
+        run_mode,
+        keychain,
+        token_file.as_deref(),
+        Arc::new(secrets_root.namespaced("hub-client")),
+    );
     let metrics_registry = telemetry.registry().clone();
     let secrets_provider: Arc<dyn SecretStoreProvider> =
         Arc::new(SecretsStoreProvider::new(secrets_root));
@@ -299,7 +326,7 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
         config_dir: args.config_dir.clone(),
         state_dir: args.state_dir.clone(),
         factory: daemon_factory,
-        secrets: hub_secrets,
+        tokens: hub_tokens,
         license: clamped_license,
         registry: metrics_registry,
     })

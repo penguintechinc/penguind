@@ -22,6 +22,7 @@ pub mod metrics;
 pub mod model;
 pub mod runner;
 pub mod sink;
+pub mod tokens;
 
 pub use cache::{CacheLoad, CachedState, HubCache};
 pub use clamp::{ClampedLicense, EffectiveLimits, LocalCeiling, clamp_policy};
@@ -31,3 +32,7 @@ pub use error::HubError;
 pub use metrics::HubMetrics;
 pub use runner::{compute_delay, run_loop};
 pub use sink::{DesiredModule, ModuleLoadError, ModuleSink};
+pub use tokens::{
+    K8sSecretTokenStore, K8sSecretWriter, RunMode, SecretTokenStore, SelectedTokenStore,
+    TOKEN_FILE_ENV, TokenStore, TokenStoreCandidates, TokenStoreKind, select_token_store,
+};

@@ -16,6 +16,10 @@ use crate::model::SyncBundle;
 
 /// File name of the state document inside the cache dir.
 pub const STATE_FILE: &str = "hub-cache.json";
+/// File name of the monotonic rollback high-water marks. Survives
+/// [`HubCache::clear`] (revocation); only [`HubCache::reset_high_water`], an
+/// explicit local operator action, removes entries.
+pub const HIGH_WATER_FILE: &str = "hub-highwater.json";
 
 /// What survives a restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,7 +122,52 @@ impl HubCache {
         }
     }
 
-    /// Removes the state file and every blob (revocation).
+    /// Path of the high-water file.
+    pub fn high_water_path(&self) -> PathBuf {
+        self.dir.join(HIGH_WATER_FILE)
+    }
+
+    /// Reads the high-water marks; missing → empty. An unreadable or
+    /// unparsable file is an error so the caller can keep what it has.
+    pub fn load_high_water(&self) -> Result<BTreeMap<String, String>, HubError> {
+        let path = self.high_water_path();
+        match fs::symlink_metadata(&path) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => return Err(HubError::Cache("high-water: not a regular file".into())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(e) => return Err(HubError::Cache(e.to_string())),
+        }
+        let raw = fs::read(&path).map_err(|e| HubError::Cache(e.to_string()))?;
+        serde_json::from_slice(&raw).map_err(|e| HubError::Cache(e.to_string()))
+    }
+
+    /// Persists the high-water marks atomically (0600).
+    pub fn save_high_water(&self, marks: &BTreeMap<String, String>) -> Result<(), HubError> {
+        let raw = serde_json::to_vec_pretty(marks).map_err(|e| HubError::Cache(e.to_string()))?;
+        write_atomic(&self.dir, &self.high_water_path(), &raw)
+    }
+
+    /// Explicit local operator action: forget the mark for `id`, or every
+    /// mark when `id` is `None`. Never called by the sync path.
+    pub fn reset_high_water(&self, id: Option<&str>) -> Result<(), HubError> {
+        match id {
+            None => match fs::remove_file(self.high_water_path()) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(HubError::Cache(e.to_string())),
+            },
+            Some(id) => {
+                let mut marks = self.load_high_water()?;
+                if marks.remove(id).is_some() {
+                    self.save_high_water(&marks)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Removes the state file and every blob (revocation). The high-water
+    /// file is deliberately kept.
     pub fn clear(&self) {
         let _ = fs::remove_file(self.state_path());
         let _ = fs::remove_dir_all(self.blob_dir());
@@ -181,6 +230,42 @@ fn create_private(path: &Path) -> std::io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn high_water_survives_clear_and_resets_only_explicitly() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let c = HubCache::new(dir.path());
+        assert!(c.load_high_water().expect("empty").is_empty());
+        let marks = BTreeMap::from([
+            ("a".to_string(), "2.0.0".to_string()),
+            ("b".to_string(), "1.0.0".to_string()),
+        ]);
+        c.save_high_water(&marks).expect("save");
+        c.clear();
+        assert_eq!(c.load_high_water().expect("kept"), marks);
+        c.reset_high_water(Some("a")).expect("reset a");
+        c.reset_high_water(Some("zz")).expect("absent id ok");
+        assert_eq!(
+            c.load_high_water().expect("b only"),
+            BTreeMap::from([("b".to_string(), "1.0.0".to_string())])
+        );
+        c.reset_high_water(None).expect("reset all");
+        c.reset_high_water(None).expect("idempotent");
+        assert!(c.load_high_water().expect("empty").is_empty());
+    }
+
+    #[test]
+    fn high_water_corrupt_or_non_file_is_error() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let c = HubCache::new(dir.path());
+        fs::write(c.high_water_path(), b"{nope").expect("w");
+        assert!(c.load_high_water().is_err());
+        assert!(c.reset_high_water(Some("a")).is_err());
+        fs::remove_file(c.high_water_path()).expect("rm");
+        fs::create_dir(c.high_water_path()).expect("dir");
+        assert!(c.load_high_water().is_err());
+        assert!(c.reset_high_water(None).is_err());
+    }
 
     fn state() -> CachedState {
         CachedState {

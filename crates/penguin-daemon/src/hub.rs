@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use penguin_hub_client::{
     ClampedLicense, CredentialStore, DesiredModule, HubCache, HubClient, HubClientConfig,
-    HubMetrics, LocalCeiling, ModuleLoadError, ModuleSink, run_loop,
+    HubMetrics, K8sSecretTokenStore, LocalCeiling, ModuleLoadError, ModuleSink, RunMode,
+    TOKEN_FILE_ENV, TokenStore, TokenStoreCandidates, run_loop, select_token_store,
 };
 use penguin_sdk::{LicenseChecker, SecretStore};
 use penguin_wasm_host::WasmHostError;
@@ -210,7 +211,7 @@ pub fn build_client(
     cfg: &HubFileConfig,
     state_dir: &Path,
     sink: Arc<dyn ModuleSink>,
-    secrets: Arc<dyn SecretStore>,
+    tokens: Arc<dyn TokenStore>,
     license: Arc<ClampedLicense>,
     registry: &prometheus::Registry,
 ) -> Result<HubClient, HubSetupError> {
@@ -259,12 +260,59 @@ pub fn build_client(
     Ok(HubClient::new(
         client_cfg,
         fetcher,
-        CredentialStore::new(secrets),
+        CredentialStore::from_token_store(tokens),
         HubCache::new(cache_dir),
         sink,
         license,
         metrics,
     ))
+}
+
+/// Env var selecting the run mode (`desktop` / `daemonset` / `server`).
+pub const RUN_MODE_ENV: &str = "PENGUIND_RUN_MODE";
+
+/// Parses [`RUN_MODE_ENV`]; unset defaults to `server`, an unknown value is
+/// logged and also treated as `server`.
+pub fn run_mode_from(value: Option<&str>) -> RunMode {
+    match value.filter(|v| !v.trim().is_empty()) {
+        None => RunMode::Server,
+        Some(v) => RunMode::parse(v).unwrap_or_else(|| {
+            tracing::warn!(value = %v, env = RUN_MODE_ENV, "unknown run mode; using server");
+            RunMode::Server
+        }),
+    }
+}
+
+/// Picks the hub token store for `mode`. `keychain` is `Some` only when the OS
+/// keychain is reachable; `token_file` is [`TOKEN_FILE_ENV`] (daemonset).
+/// No K8s API writer is wired yet, so a daemonset agent re-bootstraps after a
+/// restart once its refresh token rotates.
+pub fn hub_token_store(
+    mode: RunMode,
+    keychain: Option<Arc<dyn SecretStore>>,
+    token_file: Option<&Path>,
+    encrypted_file: Arc<dyn SecretStore>,
+) -> Arc<dyn TokenStore> {
+    let k8s_secret = match mode {
+        RunMode::Daemonset => token_file.and_then(|p| K8sSecretTokenStore::open(p, None)),
+        RunMode::Desktop | RunMode::Server => None,
+    };
+    select_token_store(
+        mode,
+        TokenStoreCandidates {
+            keychain,
+            k8s_secret,
+            encrypted_file,
+        },
+    )
+    .store
+}
+
+/// Reads [`TOKEN_FILE_ENV`].
+pub fn token_file_from_env() -> Option<PathBuf> {
+    std::env::var_os(TOKEN_FILE_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Handle on the running hub loop.
@@ -289,8 +337,8 @@ pub struct HubSpawn {
     pub state_dir: PathBuf,
     /// Factory that runs fetched modules.
     pub factory: Arc<DaemonHostFactory>,
-    /// Namespaced secret store for the agent tokens.
-    pub secrets: Arc<dyn SecretStore>,
+    /// Token store picked by [`hub_token_store`].
+    pub tokens: Arc<dyn TokenStore>,
     /// The flag combiner shared with the factory (licence && hub).
     pub license: Arc<ClampedLicense>,
     /// Registry the hub metrics register into.
@@ -320,7 +368,7 @@ pub async fn spawn_hub_client(spawn: HubSpawn) -> Option<HubTask> {
         &cfg,
         &spawn.state_dir,
         sink,
-        spawn.secrets,
+        spawn.tokens,
         spawn.license,
         &spawn.registry,
     ) {
@@ -353,6 +401,8 @@ mod tests {
     use crate::broker::EventBroker;
     use crate::config::ConfigStore;
     use crate::host::SecretStoreProvider;
+
+    use penguin_hub_client::{SecretTokenStore, TokenStoreKind};
 
     struct NoSecrets;
     #[async_trait]
@@ -549,7 +599,10 @@ mod tests {
             cfg,
             f.state.path(),
             Arc::new(DaemonModuleSink::new(f.factory.clone())),
-            Arc::new(NoSecrets),
+            Arc::new(SecretTokenStore::new(
+                Arc::new(NoSecrets),
+                TokenStoreKind::EncryptedFile,
+            )),
             f.license.clone(),
             f.telemetry.registry(),
         )
@@ -589,7 +642,10 @@ mod tests {
             config_dir: dir,
             state_dir: f.state.path().to_path_buf(),
             factory: f.factory.clone(),
-            secrets: Arc::new(NoSecrets),
+            tokens: Arc::new(SecretTokenStore::new(
+                Arc::new(NoSecrets),
+                TokenStoreKind::EncryptedFile,
+            )),
             license,
             registry: f.telemetry.registry().clone(),
         };
@@ -656,7 +712,10 @@ mod tests {
             config_dir: cfgdir.path().to_path_buf(),
             state_dir: f.state.path().to_path_buf(),
             factory: f.factory.clone(),
-            secrets: Arc::new(NoSecrets),
+            tokens: Arc::new(SecretTokenStore::new(
+                Arc::new(NoSecrets),
+                TokenStoreKind::EncryptedFile,
+            )),
             license: clamped(&[HUB_CLIENT_FLAG]),
             registry: f.telemetry.registry().clone(),
         })
@@ -665,5 +724,42 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(10), task.stop())
             .await
             .expect("stops");
+    }
+
+    #[test]
+    fn run_mode_defaults_to_server() {
+        assert_eq!(run_mode_from(None), RunMode::Server);
+        assert_eq!(run_mode_from(Some(" ")), RunMode::Server);
+        assert_eq!(run_mode_from(Some("bogus")), RunMode::Server);
+        assert_eq!(run_mode_from(Some("desktop")), RunMode::Desktop);
+        assert_eq!(run_mode_from(Some("daemonset")), RunMode::Daemonset);
+    }
+
+    #[test]
+    fn hub_token_store_selects_per_mode_with_fallback() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let file = dir.path().join("token");
+        std::fs::write(&file, b"").expect("w");
+        let enc = || Arc::new(NoSecrets) as Arc<dyn SecretStore>;
+        let kc = || Some(Arc::new(NoSecrets) as Arc<dyn SecretStore>);
+        let k = |m, kc, f: Option<&Path>| hub_token_store(m, kc, f, enc()).kind();
+        assert_eq!(k(RunMode::Desktop, kc(), None), TokenStoreKind::Keychain);
+        assert_eq!(k(RunMode::Server, kc(), None), TokenStoreKind::Keychain);
+        assert_eq!(
+            k(RunMode::Daemonset, kc(), Some(&file)),
+            TokenStoreKind::KubernetesSecret
+        );
+        assert_eq!(
+            k(RunMode::Daemonset, kc(), None),
+            TokenStoreKind::EncryptedFile
+        );
+        assert_eq!(
+            k(RunMode::Desktop, None, Some(&file)),
+            TokenStoreKind::EncryptedFile
+        );
+        assert_eq!(
+            k(RunMode::Server, None, None),
+            TokenStoreKind::EncryptedFile
+        );
     }
 }
