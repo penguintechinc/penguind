@@ -17,6 +17,7 @@ pub mod host;
 pub mod module;
 pub mod plugin;
 pub mod status;
+pub mod tools;
 
 pub use command::{CommandResult, CommandSpec, FlagSpec, FlagType};
 pub use error::{MetricsError, ModuleError, SecretError};

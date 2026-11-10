@@ -1,0 +1,159 @@
+{
+  "version": "1.0.0",
+  "metadata": {
+    "description": "Universal Tool Registry for the penguin-sdk Wasm runtime.",
+    "capability_whitelist_policy": "Modules are restricted to tool IDs declared in their signed manifest.",
+    "network_whitelist_policy": "Outgoing traffic filtered against FQDN and CIDRs in the manifest."
+  },
+  "tools": [
+    {
+      "id": "doh_query",
+      "description": "Perform DNS over HTTPS queries.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "SRV"] },
+          "query_type": { "type": "string", "description": "e.g., 'A', 'AAAA'" }
+        },
+        "required": ["name", "query_type"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "dns_forward",
+      "description": "Forward DNS requests to a specific endpoint.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "endpoint": { "type": "string" }
+        },
+        "required": ["query", "endpoint"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "http_request",
+      "description": "Perform an authenticated HTTP request (GET, POST, etc.) with JWT support.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"] },
+          "url": { "type": "string" },
+          "headers": { "type": "object" },
+          "body": { "type": "object" },
+          "jwt_token": { "type": "string" }
+        },
+        "required": ["method", "url"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "wireguard_kernel_ctrl",
+      "description": "Interact with the WireGuard kernel module via netlink.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "description": "e.g., 'add_interface', 'set_interface'" },
+          "interface_name": { "type": "string" },
+          "private_key": { "type": "string" },
+          "public_key": { "type": "string" },
+          "allowed_ips": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["action", "interface_name"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "wireguard_userspace_handshake",
+      "description": "Execute WireGuard userspace protocol handshakes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "peer_public_key": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "keepalive": { "type": "integer" }
+        },
+        "required": ["peer_public_key", "endpoint"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "license_verify",
+      "description": "Verify module license keys.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "license_key": { "type": "string" },
+          "module_id": { "type": "string" }
+        },
+        "required": ["license_key", "module_id"]
+      },
+      "return_type": "boolean"
+    },
+    {
+      "id": "jwt_decode",
+      "description": "Decode and validate JWT claims.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "token": { "type": "string" }
+        },
+        "required": ["token"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "config_read",
+      "description": "Read module configuration files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" }
+        },
+        "required": ["path"]
+      },
+      "return_type": "object"
+    },
+    {
+      "id": "metrics_publish",
+      "description": "Publish telemetry to Prometheus/Registry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "metric_name": { "type": "string" },
+          "value": { "type": "number" },
+          "labels": { "type": "object" }
+        },
+        "required": ["metric_name", "value"]
+      },
+      "return_type": "void"
+    },
+    {
+      "id": "logger",
+      "description": "Access the system logging facility.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "level": { "type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"] },
+          "message": { "type": "string" },
+          "context": { "type": "object" }
+        },
+        "required": ["level", "message"]
+      },
+      "return_type": "void"
+    },
+    {
+      "id": "temp_dir",
+      "description": "Create or access a temporary storage directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Optional custom path" }
+        }
+      },
+      "return_type": "string"
+    }
+  ]
+}
