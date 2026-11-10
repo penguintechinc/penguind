@@ -22,9 +22,10 @@ permissions:
 
 jobs:
   wasm-host:
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha"}') }}
+    container: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (matches rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -34,7 +35,7 @@ jobs:
 
       - name: protoc
         # penguin-proto's build script needs protoc + well-known types (see ci.yml).
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+        uses: ./.github/actions/setup-protoc
 
       - name: Build penguin-wasm-host
         shell: bash
