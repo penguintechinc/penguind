@@ -66,7 +66,8 @@ impl ModuleGauges {
     }
 }
 
-/// Whether `name` matches `^[a-z][a-z0-9_]{0,95}$` (no `__` reserved prefix).
+/// Whether `name` matches `^[a-z][a-z0-9_]{0,95}$` with no `__` and no
+/// trailing `_`, so `<module>__<name>` splits unambiguously.
 fn valid_metric_name(name: &str) -> bool {
     let b = name.as_bytes();
     !b.is_empty()
@@ -74,6 +75,8 @@ fn valid_metric_name(name: &str) -> bool {
         && b[0].is_ascii_lowercase()
         && b.iter()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
+        && !name.contains("__")
+        && !name.ends_with('_')
 }
 
 /// Whether `name` is an acceptable guest label name (`^[a-z][a-z0-9_]*$`,
@@ -97,8 +100,9 @@ fn sanitize(module: &str) -> String {
         .collect()
 }
 
-/// Backs `metrics_publish` with gauges named `penguind_module_<name>` and a
-/// constant `module="<id>"` label. Names, labels and every dimension are
+/// Backs `metrics_publish` with gauges named
+/// `penguind_module_<sanitized_module>__<name>` (per-module families, so one
+/// module cannot squat another's names) plus a constant `module="<id>"` label. Names, labels and every dimension are
 /// validated and capped, because they come from untrusted guest code; caps
 /// live in [`ModuleGauges`] so they hold across runs.
 pub struct MetricsPublishExecutor {
@@ -172,7 +176,7 @@ impl ToolExecutor for MetricsPublishExecutor {
         let labels = parse_labels(&args["labels"])?;
         let names: Vec<String> = labels.keys().cloned().collect();
         let values: Vec<String> = labels.values().cloned().collect();
-        let full = format!("{PREFIX}{name}");
+        let full = format!("{PREFIX}{}__{name}", sanitize(&self.module));
 
         // Short synchronous critical section; nothing here awaits.
         let mut state = self
@@ -261,7 +265,7 @@ mod tests {
         let fam = reg.gather();
         let f = fam
             .iter()
-            .find(|f| f.name() == "penguind_module_temp")
+            .find(|f| f.name() == "penguind_module_my_mod__temp")
             .expect("family");
         let module = f.get_metric()[0]
             .get_label()
@@ -456,11 +460,11 @@ mod tests {
             .expect("a");
         let names: Vec<String> = reg.gather().iter().map(|f| f.name().to_string()).collect();
         assert!(
-            names.contains(&"penguind_module_c".to_string()),
+            names.contains(&"penguind_module_a_b__c".to_string()),
             "{names:?}"
         );
         assert!(
-            names.contains(&"penguind_module_b_c".to_string()),
+            names.contains(&"penguind_module_a__b_c".to_string()),
             "{names:?}"
         );
         // Module ids that sanitize to the same form are rejected.
@@ -480,7 +484,9 @@ mod tests {
     #[tokio::test]
     async fn strict_metric_and_label_names() {
         let (e, _) = exec();
-        for bad in ["Temp", "1x", "_x", "x-y", "x.y", "x:y", "\u{e9}"] {
+        for bad in [
+            "Temp", "1x", "_x", "x__y", "x_", "x-y", "x.y", "x:y", "\u{e9}",
+        ] {
             assert!(
                 e.execute(json!({"metric_name":bad,"value":1}))
                     .await
@@ -500,6 +506,31 @@ mod tests {
             e.execute(json!({"metric_name":"ok_1","value":1}))
                 .await
                 .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn modules_cannot_squat_each_others_metric_names() {
+        // regression: a shared `penguind_module_foo` family let module A fix
+        // the label schema so module B's `foo` failed to register.
+        let reg = Registry::new();
+        let gauges = ModuleGauges::new(reg.clone());
+        MetricsPublishExecutor::new(gauges.clone(), "mod-a")
+            .execute(json!({"metric_name":"foo","value":1,"labels":{"zone":"z"}}))
+            .await
+            .expect("a");
+        MetricsPublishExecutor::new(gauges, "mod-b")
+            .execute(json!({"metric_name":"foo","value":2,"labels":{"host":"h","dc":"d"}}))
+            .await
+            .expect("b");
+        let names: Vec<String> = reg.gather().iter().map(|f| f.name().to_string()).collect();
+        assert!(
+            names.contains(&"penguind_module_mod_a__foo".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"penguind_module_mod_b__foo".to_string()),
+            "{names:?}"
         );
     }
 }

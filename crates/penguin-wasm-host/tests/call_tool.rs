@@ -531,7 +531,7 @@ async fn real_executors_metrics_publish_and_doh_not_implemented_gap_closed() {
     assert!(
         prom.gather()
             .iter()
-            .any(|f| f.name() == "penguind_module_g")
+            .any(|f| f.name() == "penguind_module_t__g")
     );
     // DoH is wired: a dead resolver is a Failed (-3), no longer NotImplemented (-4).
     let w = caller_wasm("doh_query", r#"{"name":"a.test","query_type":"A"}"#, 256);

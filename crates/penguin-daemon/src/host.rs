@@ -716,7 +716,10 @@ mod tests {
             .await
             .expect("metric");
         let fams = telemetry.registry().gather();
-        assert!(fams.iter().any(|f| f.name() == "penguind_module_requests"));
+        assert!(
+            fams.iter()
+                .any(|f| f.name() == "penguind_module_tooly__requests")
+        );
         let calls = fams
             .iter()
             .find(|f| f.name() == "penguind_wasm_tool_calls_total")
