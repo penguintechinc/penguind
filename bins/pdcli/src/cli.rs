@@ -82,6 +82,14 @@ pub async fn run(args: Vec<String>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // `hub` talks HTTPS to the hub, never to the local daemon: route it before
+    // dialing so an absent penguind neither delays nor warns.
+    if let Ok(matches) = penguin_cli_core::tree::build_static_root().try_get_matches_from(&args)
+        && let Some(("hub", hub_matches)) = matches.subcommand()
+    {
+        return crate::hub::run(&matches, hub_matches).await;
+    }
+
     let socket_path = penguin_cli_core::socket::extract_socket_override(&args[1..])
         .unwrap_or_else(|| penguin_cli_core::socket::DEFAULT_SOCKET_PATH.to_string());
 
