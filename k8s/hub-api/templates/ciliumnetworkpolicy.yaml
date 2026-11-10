@@ -62,7 +62,16 @@ spec:
               protocol: ANY
           rules:
             dns:
-              - matchPattern: "*"
+              - matchPattern: "*.svc.cluster.local"
+              {{- range $t := list .Values.egress.postgres .Values.egress.s3 .Values.egress.oidc .Values.egress.otel }}
+              {{- range $t.fqdns }}
+              {{- if contains "*" . }}
+              - matchPattern: {{ . | quote }}
+              {{- else }}
+              - matchName: {{ . | quote }}
+              {{- end }}
+              {{- end }}
+              {{- end }}
     {{- include "hub-api.egressTarget" (dict "t" .Values.egress.postgres "port" .Values.egress.postgres.port) | nindent 4 }}
     {{- include "hub-api.egressTarget" (dict "t" .Values.egress.s3 "port" .Values.egress.s3.port) | nindent 4 }}
     {{- include "hub-api.egressTarget" (dict "t" .Values.egress.oidc "port" .Values.egress.oidc.port) | nindent 4 }}

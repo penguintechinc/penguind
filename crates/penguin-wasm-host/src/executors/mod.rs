@@ -13,4 +13,6 @@ pub use config_executor::ConfigReadExecutor;
 pub use doh_executor::{DEFAULT_DOH_ENDPOINT, DohQueryExecutor, MAX_DOH_RESPONSE_BYTES};
 pub use executor::ToolExecutor;
 pub use logger_executor::{LoggerExecutor, MAX_LOG_MESSAGE_BYTES, sanitize_message};
-pub use metrics_executor::{MAX_LABELS, MAX_METRICS, MAX_SERIES, MetricsPublishExecutor};
+pub use metrics_executor::{
+    MAX_LABELS, MAX_METRICS, MAX_SERIES, MetricsPublishExecutor, ModuleGauges,
+};

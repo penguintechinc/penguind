@@ -249,7 +249,7 @@ mod tests {
         let fams = telemetry.registry().gather();
         assert!(
             fams.iter()
-                .any(|f| f.name() == "penguind_module_my_mod_hits")
+                .any(|f| f.name() == "penguind_module_my_mod__hits")
         );
         assert!(
             fams.iter()

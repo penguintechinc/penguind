@@ -3,12 +3,11 @@
 use std::sync::Arc;
 
 use penguin_sdk::Logger;
-use prometheus::Registry;
 
 use super::{RegistryError, ToolMetrics, ToolRegistry};
 use crate::executors::{
     ConfigReadExecutor, DEFAULT_DOH_ENDPOINT, DohQueryExecutor, LoggerExecutor,
-    MetricsPublishExecutor,
+    MetricsPublishExecutor, ModuleGauges,
 };
 
 /// Everything the standard registry needs for one module.
@@ -19,8 +18,9 @@ pub struct ModuleToolContext<'a> {
     pub logger: Arc<dyn Logger>,
     /// The module's raw YAML config, backing `config_read` (empty = none).
     pub config_yaml: &'a [u8],
-    /// The daemon's shared prometheus registry, backing `metrics_publish`.
-    pub prometheus: &'a Registry,
+    /// The daemon-wide gauge store backing `metrics_publish`; share one
+    /// across runs so per-module caps persist.
+    pub gauges: &'a ModuleGauges,
     /// The DoH resolver endpoint; `None` uses [`DEFAULT_DOH_ENDPOINT`].
     pub doh_endpoint: Option<&'a str>,
     /// Optional call telemetry (shared across modules, registered once).
@@ -40,7 +40,7 @@ pub fn build_module_registry(ctx: ModuleToolContext<'_>) -> Result<ToolRegistry,
     let config = ConfigReadExecutor::new(ctx.config_yaml).map_err(RegistryError::Executor)?;
     registry.register(Arc::new(config))?;
     registry.register(Arc::new(MetricsPublishExecutor::new(
-        ctx.prometheus.clone(),
+        ctx.gauges.clone(),
         ctx.module,
     )))?;
     let doh = DohQueryExecutor::new(ctx.doh_endpoint.unwrap_or(DEFAULT_DOH_ENDPOINT))
@@ -53,6 +53,7 @@ pub fn build_module_registry(ctx: ModuleToolContext<'_>) -> Result<ToolRegistry,
 mod tests {
     use super::*;
     use penguin_sdk::LogLevel;
+    use prometheus::Registry;
     use serde_json::json;
 
     struct Quiet;
@@ -60,12 +61,16 @@ mod tests {
         fn log(&self, _l: LogLevel, _m: &str, _f: &[(&str, &str)]) {}
     }
 
-    fn ctx<'a>(prom: &'a Registry, cfg: &'a [u8], doh: Option<&'a str>) -> ModuleToolContext<'a> {
+    fn ctx<'a>(
+        prom: &'a ModuleGauges,
+        cfg: &'a [u8],
+        doh: Option<&'a str>,
+    ) -> ModuleToolContext<'a> {
         ModuleToolContext {
             module: "m",
             logger: Arc::new(Quiet),
             config_yaml: cfg,
-            prometheus: prom,
+            gauges: prom,
             doh_endpoint: doh,
             metrics: None,
         }
@@ -73,7 +78,7 @@ mod tests {
 
     #[tokio::test]
     async fn wires_the_four_real_tools_and_leaves_the_rest_loud() {
-        let prom = Registry::new();
+        let prom = ModuleGauges::new(Registry::new());
         let reg = build_module_registry(ctx(&prom, b"a: 1\n", None)).expect("registry");
         assert!(reg.call("config_read", json!({"path":"a"})).await.is_ok());
         assert!(
@@ -95,7 +100,7 @@ mod tests {
 
     #[test]
     fn bad_config_or_endpoint_fails_construction() {
-        let prom = Registry::new();
+        let prom = ModuleGauges::new(Registry::new());
         assert!(matches!(
             build_module_registry(ctx(&prom, b": : not yaml [", None)),
             Err(RegistryError::Executor(_))
