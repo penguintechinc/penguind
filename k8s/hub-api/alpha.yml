@@ -13,7 +13,7 @@ service:
   port: 8080
   nodePort: 30080   # increment by 100 on collision with another repo
 config:
-  LOG_LEVEL: "debug"
+  LOG_LEVEL: "info"
   DB_POOL_SIZE: "2"
   BASE_URL: "penguind-alpha.penguintech.cloud:8443"
 ingress:
@@ -21,7 +21,7 @@ ingress:
 networkPolicy:
   ingress:
     namespaces: []
-    entities: [world, host, remote-node]
+    entities: [host]   # NodePort via localhost arrives as host; in-cluster callers go in ingress.namespaces
 secrets:
   db: {name: hub-api-db}
   s3: {name: hub-api-s3}

@@ -12,6 +12,7 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 
 use crate::error::{MetricsError, SecretError};
+pub use crate::tools::{ToolError, ToolFuture};
 
 /// The bundle of host capabilities a module receives at init time.
 ///
@@ -36,6 +37,13 @@ pub trait HostServices: Send + Sync {
     fn data_dir(&self) -> PathBuf;
     /// The sink module status-change events are published to.
     fn events(&self) -> Arc<dyn EventSink>;
+    /// Invokes a daemon tool by name with JSON arguments (see
+    /// `schemas/tool_definitions.json`). The default fails loudly with
+    /// [`ToolError::Unavailable`] so a host that has not wired a tool registry
+    /// can never appear to succeed.
+    fn call_tool<'a>(&'a self, _name: &'a str, _args: serde_json::Value) -> ToolFuture<'a> {
+        Box::pin(async { Err(ToolError::Unavailable) })
+    }
 }
 
 /// Namespaced secure storage backed by the OS keychain/keystore (with an
