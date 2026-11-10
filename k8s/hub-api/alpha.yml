@@ -1,0 +1,36 @@
+image:
+  repository: localhost:32000/hub-api
+  tag: alpha-latest
+  pullPolicy: IfNotPresent
+replicas: 1
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 250m, memory: 256Mi}
+hpa: {enabled: false}
+pdb: {enabled: false}
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080   # increment by 100 on collision with another repo
+config:
+  LOG_LEVEL: "debug"
+  DB_POOL_SIZE: "2"
+  BASE_URL: "penguind-alpha.penguintech.cloud:8443"
+ingress:
+  enabled: false    # alpha is reached via NodePort on localhost:30080
+networkPolicy:
+  ingress:
+    namespaces: []
+    entities: [world, host, remote-node]
+secrets:
+  db: {name: hub-api-db}
+  s3: {name: hub-api-s3}
+  oidc: {name: hub-api-oidc}
+otel:
+  env:
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc:4317"
+egress:
+  postgres: {selector: {app.kubernetes.io/name: postgres}}
+  s3: {port: 9000, selector: {app.kubernetes.io/name: minio}}
+  oidc: {fqdns: [auth-alpha.penguintech.cloud]}
+  otel: {selector: {app.kubernetes.io/name: otel-collector}}

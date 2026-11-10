@@ -65,6 +65,10 @@ nix.workspace = true
 # tests. Not a workspace dependency — same direct-crates.io convention
 # penguin-secrets and penguin-daemon already use for their own dev-deps.
 tempfile = "3"
+# Architecture integration test: WASM module -> call_tool -> registry.
+penguin-wasm-host.workspace = true
+wat.workspace = true
+serde_json.workspace = true
 
 # Windows SCM entry point (cfg(windows)-only; see src/service/windows.rs).
 # Placed in its own target table at the end of the file so it cannot

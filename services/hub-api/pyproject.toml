@@ -1,0 +1,49 @@
+[project]
+name = "hub-api"
+version = "0.1.0"
+description = "penguind management hub API"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "penguin-dal==0.4.1",
+    "sqlalchemy==2.1.8",
+    "alembic==1.20.1",
+    "psycopg2-binary==2.9.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "testcontainers[postgres]==4.15.0",
+    "mypy==2.4.1",
+    "ruff==0.17.4",
+]
+
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "N", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["penguin_dal.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=app/models --cov-branch --cov-report=term-missing --cov-fail-under=90"

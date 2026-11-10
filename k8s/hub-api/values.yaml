@@ -1,0 +1,96 @@
+# Production-safe baseline. Env files (alpha/beta/gamma/production.yml) override.
+# Namespace = product name: deploy with `-n penguind`.
+# NO secret values live here - Secrets are referenced by name and must pre-exist
+# (ExternalSecret / SealedSecret / Vault). Env var names below are the contract with T1.
+
+image:
+  repository: ghcr.io/penguintechinc/penguind/hub-api
+  tag: ""          # beta/gamma: CI tag
+  digest: ""       # production: sha256 digest (wins over tag)
+  pullPolicy: IfNotPresent
+
+namespace:
+  create: true     # ships PSA `restricted` labels; set false if the namespace is managed elsewhere (ArgoCD CreateNamespace)
+
+replicas: 3        # ignored when hpa.enabled
+
+resources:
+  requests: {cpu: 500m, memory: 512Mi}
+  limits: {cpu: 1000m, memory: 1Gi}
+
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  cpuUtilization: 70
+
+pdb:
+  enabled: true
+  minAvailable: 2
+
+service:
+  type: ClusterIP
+  port: 8080
+  nodePort: null
+
+# Non-secret app config (rendered into a per-environment ConfigMap).
+config:
+  LOG_LEVEL: "warn"
+  DB_POOL_SIZE: "20"
+  BASE_URL: ""
+  HUB_S3_ENDPOINT: ""
+  HUB_S3_BUCKET: ""
+  HUB_S3_REGION: ""
+  HUB_TRUSTED_PUBKEYS: ""   # minisign public keys (public, not secret)
+
+# References to pre-existing Secrets. Never put values here.
+secrets:
+  db:   {name: "", key: dsn}
+  s3:   {name: "", accessKeyKey: access-key-id, secretKeyKey: secret-access-key}
+  oidc: {name: "", issuerKey: issuer-url, audienceKey: audience}
+
+# OTLP destination comes from standard OTEL_* vars; nothing is hardcoded.
+otel:
+  serviceName: hub-api
+  env: {}          # e.g. OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL, OTEL_RESOURCE_ATTRIBUTES
+
+ingress:
+  enabled: true
+  className: nginx
+  host: hub.example.invalid
+  tlsSecretName: hub-api-tls
+  annotations: {}
+  # Agent mTLS for /api/v1/agent/ - DEFAULT OFF (JWT path is the default; see plan Open Question 1).
+  #   off         - no mTLS ingress
+  #   verify      - dedicated host `mtls.host`; ingress-nginx verifies client certs against
+  #                 `mtls.caSecret` (namespace/name) and forwards the cert (XFCC/SVID header) upstream
+  #   passthrough - dedicated host, TLS passed through to the pod on `mtls.passthroughPort`;
+  #                 the app image must serve TLS there (hypercorn --certfile/--keyfile) - not wired by default
+  # ingress-nginx applies client-cert auth per host, hence the separate host.
+  mtls:
+    mode: "off"
+    host: ""
+    caSecret: ""
+    passthroughPort: 8443
+
+networkPolicy:
+  ingress:
+    namespaces: [ingress-nginx]   # namespaces whose pods may reach 8080
+    entities: []                  # e.g. [world, host] for NodePort in alpha
+
+# Egress allowlist (plus DNS). Set at least one of selector/cidrs/fqdns per target in each env.
+egress:
+  postgres: {port: 5432, selector: {}, cidrs: [], fqdns: []}
+  s3:       {port: 443,  selector: {}, cidrs: [], fqdns: []}
+  oidc:     {port: 443,  selector: {}, cidrs: [], fqdns: []}
+  otel:     {port: 4317, selector: {}, cidrs: [], fqdns: []}   # optional; empty = no telemetry egress
+
+tetragon:
+  enabled: true
+  allowedBinaries:
+    - /opt/venv/bin/python
+    - /opt/venv/bin/python3
+    - /opt/venv/bin/hypercorn
+    - /usr/local/bin/python
+    - /usr/local/bin/python3
+    - /usr/local/bin/python3.13

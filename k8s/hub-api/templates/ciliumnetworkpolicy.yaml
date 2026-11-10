@@ -1,0 +1,69 @@
+# Explicit default deny for hub-api pods: an empty rule selects the pods in both
+# directions and allows nothing; the policy below adds the narrow allowances.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "hub-api.name" . }}-default-deny
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hub-api.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "hub-api.selectorLabels" . | nindent 6 }}
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "hub-api.name" . }}-allow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hub-api.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "hub-api.selectorLabels" . | nindent 6 }}
+  ingress:
+    {{- with .Values.networkPolicy.ingress.namespaces }}
+    - fromEndpoints:
+        {{- range . }}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+            {{- if include "hub-api.passthrough" $ }}
+            - port: {{ $.Values.ingress.mtls.passthroughPort | quote }}
+              protocol: TCP
+            {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.ingress.entities }}
+    - fromEntities:
+        {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+    {{- include "hub-api.egressTarget" (dict "t" .Values.egress.postgres "port" .Values.egress.postgres.port) | nindent 4 }}
+    {{- include "hub-api.egressTarget" (dict "t" .Values.egress.s3 "port" .Values.egress.s3.port) | nindent 4 }}
+    {{- include "hub-api.egressTarget" (dict "t" .Values.egress.oidc "port" .Values.egress.oidc.port) | nindent 4 }}
+    {{- include "hub-api.egressTarget" (dict "t" .Values.egress.otel "port" .Values.egress.otel.port) | nindent 4 }}

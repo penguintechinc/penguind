@@ -37,6 +37,7 @@ repos:
         args: [--maxkb=1024]
       - id: check-yaml
         args: [--allow-multiple-documents]
+        exclude: ^k8s/[^/]+/templates/  # Helm templates are Go-templated, not plain YAML
       - id: check-json
       - id: check-executables-have-shebangs
       - id: detect-private-key
