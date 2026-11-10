@@ -17,6 +17,11 @@ on:
   push:
     branches: [main, "release/**"]
 
+# Container jobs default to `sh`; pin bash so `set -o pipefail` works everywhere.
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
@@ -28,10 +33,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (matches rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: '1.97.0'
-          targets: wasm32-wasip1
+        # Plain rustup: dtolnay's composite inputs arrive empty inside dal2alpha
+        # job containers. rust-toolchain.toml pins the channel + components.
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-wasip1
+          rustc --version
 
       - name: protoc
         # penguin-proto's build script needs protoc + well-known types (see ci.yml).

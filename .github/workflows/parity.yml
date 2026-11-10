@@ -37,6 +37,11 @@ on:
   push:
     branches: [main, "release/**"]
 
+# Container jobs default to `sh`; pin bash so `set -o pipefail` works everywhere.
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
