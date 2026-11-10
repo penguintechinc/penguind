@@ -3,7 +3,7 @@
 # These exercise real boundaries the unit gate deliberately excludes — unix
 # sockets and the SO_PEERCRED matrix (M2), external plugin subprocesses (M3),
 # privileged :53/:123 binds and resolver surgery (M5), and network namespaces
-# for WireGuard (M6). The container is privileged for exactly that reason.
+# for WireGuard (M6). The container gets --cap-add NET_ADMIN for exactly that reason.
 #
 # Unlike the unit gate this tier is functional validation, not a second coverage
 # gate; combined coverage is reported informationally by `make
@@ -28,14 +28,15 @@ permissions:
 
 jobs:
   integration:
-    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha"}') }}
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
     container:
       image: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
-      # Privileged: root-only tests self-skip when unprivileged, so without this
-      # the tier would silently pass by skipping everything that matters.
-      options: --privileged
+      # NET_ADMIN only: wg_tunnel needs it for netns/WireGuard; with
+      # PENGUIN_REQUIRE_NET_ADMIN=1 an unmet precondition fails, never skips.
+      options: --cap-add NET_ADMIN
     env:
       PENGUIN_INTEGRATION: "1"
+      PENGUIN_REQUIRE_NET_ADMIN: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-protoc

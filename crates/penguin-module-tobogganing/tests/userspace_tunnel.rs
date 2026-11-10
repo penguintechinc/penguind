@@ -74,12 +74,11 @@ fn has_privilege() -> bool {
         return false;
     };
     for line in status.lines() {
-        if let Some(uid_fields) = line.strip_prefix("Uid:") {
-            if let Some(effective) = uid_fields.split_whitespace().nth(1) {
-                if effective == "0" {
-                    return true;
-                }
-            }
+        if let Some(uid_fields) = line.strip_prefix("Uid:")
+            && let Some(effective) = uid_fields.split_whitespace().nth(1)
+            && effective == "0"
+        {
+            return true;
         }
         if let Some(cap_hex) = line.strip_prefix("CapEff:") {
             const CAP_NET_ADMIN_BIT: u32 = 12;
@@ -376,11 +375,11 @@ async fn userspace_backend_establishes_real_tunnel() {
     .expect("add route for tunnel peer");
 
     // Debug: verify kernel WireGuard module is loaded
-    if let Ok(mod_check) = run("lsmod", &[]) {
-        if !mod_check.contains("wireguard") {
-            eprintln!("WARNING: kernel wireguard module may not be loaded in container");
-            eprintln!("(lsmod output doesn't show 'wireguard' — check dmesg for load errors)");
-        }
+    if let Ok(mod_check) = run("lsmod", &[])
+        && !mod_check.contains("wireguard")
+    {
+        eprintln!("WARNING: kernel wireguard module may not be loaded in container");
+        eprintln!("(lsmod output doesn't show 'wireguard' — check dmesg for load errors)");
     }
 
     // Debug: show peer's WireGuard stats before ping
@@ -420,18 +419,18 @@ async fn userspace_backend_establishes_real_tunnel() {
             "EVENT LOOP IS WORKING (tx_bytes={}), BUT PEER NOT RESPONDING (rx_bytes={})",
             final_stats.tx_bytes, final_stats.rx_bytes
         );
-        eprintln!("");
+        eprintln!();
         eprintln!("This is a CONTAINER INFRASTRUCTURE ISSUE, not a code bug:");
         eprintln!("- Event loop successfully sends WireGuard handshake packets (tx_bytes > 0)");
         eprintln!("- But kernel WireGuard peer in netns doesn't respond (rx_bytes = 0)");
         eprintln!("- Likely cause: kernel wireguard module not fully functional in this container");
-        eprintln!("");
+        eprintln!();
         eprintln!("TEST STATUS: CI-ONLY");
         eprintln!("This test requires: privileged Docker + working kernel WireGuard module");
         eprintln!(
             "To run this test, use scripts/wg-tunnel/run.sh approach with full kernel module setup"
         );
-        eprintln!("");
+        eprintln!();
 
         // For this session, we'll accept that the event loop is proven by tx_bytes > 0
         // and the peer setup limitation is a container/infrastructure issue
