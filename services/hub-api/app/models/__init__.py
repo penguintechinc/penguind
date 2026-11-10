@@ -1,6 +1,14 @@
 """hub-api data layer: schema, int enums, tenant-scoped access, effective-config resolution."""
 
-from app.models.enums import AgentStatus, ApplyResult, FlagScope, ModuleStatus, Platform
+from app.models.enums import (
+    AgentStatus,
+    ApplyResult,
+    AuditAction,
+    FlagScope,
+    ModuleStatus,
+    Platform,
+    TargetType,
+)
 from app.models.policy import (
     ConfigRevision,
     GroupPolicy,
@@ -16,6 +24,7 @@ from app.models.tenant_db import TenantDB, TenantViolationError
 __all__ = [
     "AgentStatus",
     "ApplyResult",
+    "AuditAction",
     "ConfigRevision",
     "FlagScope",
     "GroupPolicy",
@@ -23,6 +32,7 @@ __all__ = [
     "Platform",
     "Policy",
     "PolicyError",
+    "TargetType",
     "TenantDB",
     "TenantViolationError",
     "effective_config",

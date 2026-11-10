@@ -1,7 +1,8 @@
 """SQLAlchemy Core schema for hub-api, the single source for Alembic and penguin-dal.
 
 Every table carries a BIGINT identity PK, a unique public_id UUID, a tenant_id and
-created_at/updated_at. No PII: actors are opaque OIDC subs, agents are UUIDs.
+created_at/updated_at (except `tenants`, the tenant public_id map). No PII: actors are
+opaque OIDC subs, agents are UUIDs.
 """
 
 from sqlalchemy import (
@@ -54,6 +55,15 @@ def _fk(name: str, target: str, *, nullable: bool = False) -> Column[object]:
     )
 
 
+tenants = Table(
+    "tenants",
+    metadata,
+    Column("id", BigInteger, Identity(always=True), primary_key=True),
+    Column("public_id", Uuid, nullable=False, unique=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+"""Maps the tenant public_id UUID carried on every boundary to the internal BIGINT tenant_id."""
+
 tenant_configs = Table(
     "tenant_configs",
     metadata,
@@ -80,7 +90,7 @@ agents = Table(
     Column("status", SmallInteger, nullable=False),
     Column("platform", SmallInteger, nullable=False),
     Column("agent_version", String(64), nullable=False),
-    Column("spiffe_id", String(512), nullable=True),
+    Column("spiffe_id", String(512), nullable=True, unique=True),
     Column("override", JSONB, nullable=True),
     Column("last_seen_at", DateTime(timezone=True), nullable=True),
     Column("applied_etag", String(128), nullable=True),
@@ -153,4 +163,14 @@ refresh_tokens = Table(
     Column("revoked_at", DateTime(timezone=True), nullable=True),
 )
 
-ENTITY_TABLES: tuple[str, ...] = tuple(metadata.tables)
+audit_events = Table(
+    "audit_events",
+    metadata,
+    *_base_columns(),
+    Column("action", SmallInteger, nullable=False),
+    Column("target_type", SmallInteger, nullable=False),
+    Column("target_public_id", Uuid, nullable=True),
+    Column("actor", String(255), nullable=False),
+)
+
+ENTITY_TABLES: tuple[str, ...] = tuple(t for t in metadata.tables if t != "tenants")
