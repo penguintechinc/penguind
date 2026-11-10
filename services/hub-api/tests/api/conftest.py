@@ -1,6 +1,5 @@
 """API test fixtures: app on the shared Postgres, fake OIDC verifier, moto S3, in-memory OTel."""
 
-import itertools
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from typing import Any
@@ -18,7 +17,7 @@ from app.config import Settings
 from app.factory import create_app
 from app.flags import ALL_FLAGS, StaticFlagGate
 from app.telemetry import Telemetry
-from tests.api.helpers import AGENT_SECRET
+from tests.api.helpers import AGENT_SECRET, TRUST_DOMAIN
 
 BUCKET = "hub-test"
 ADMIN_SCOPES = (
@@ -26,7 +25,6 @@ ADMIN_SCOPES = (
     "hub:modules:read hub:modules:write hub:flags:read hub:flags:write "
     "hub:bootstrap:read hub:bootstrap:write"
 )
-_tenant_ids = itertools.count(1000)
 
 
 class FakeVerifier:
@@ -51,9 +49,9 @@ def verifier() -> FakeVerifier:
 
 
 @pytest.fixture
-def tenant() -> int:
-    """A tenant id unique to this test (integer, as carried by the token claim)."""
-    return next(_tenant_ids)
+def tenant() -> uuid.UUID:
+    """A tenant public_id unique to this test (the UUID carried by the token claim)."""
+    return uuid.uuid4()
 
 
 @pytest.fixture
@@ -61,7 +59,7 @@ def admin_headers(verifier: FakeVerifier) -> Callable[..., dict[str, str]]:
     """Factory: register an admin token for ``tenant`` with ``scope`` and return its header."""
 
     def make(
-        tenant: int | str | None, scope: str = ADMIN_SCOPES, *, drop_tenant: bool = False
+        tenant: uuid.UUID | str | None, scope: str = ADMIN_SCOPES, *, drop_tenant: bool = False
     ) -> dict[str, str]:
         """Return an Authorization header whose verified claims carry the given tenant."""
         token = f"adm-{uuid.uuid4().hex}"
@@ -89,6 +87,7 @@ def settings() -> Settings:
         trusted_pubkeys=(),
         trust_forwarded_cert=False,
         trusted_proxy_cidrs=(),
+        spiffe_trust_domain=TRUST_DOMAIN,
         posthog_api_key=None,
         posthog_host=None,
         max_upload_bytes=1024 * 1024,

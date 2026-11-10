@@ -6,7 +6,7 @@ from typing import Any
 
 from quart.testing import QuartClient
 
-from tests.api.helpers import envelope_data
+from tests.api.helpers import envelope_data, spiffe_for
 
 GROUP_FIELDS = {"id", "name", "description", "policy", "agent_count", "created_at", "updated_at"}
 
@@ -22,7 +22,7 @@ async def _create_group(
 
 
 async def test_create_group_exact_field_set(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Create returns exactly the contract fields and the {status,data,meta} envelope."""
     h = admin_headers(tenant)
@@ -34,7 +34,7 @@ async def test_create_group_exact_field_set(
 
 
 async def test_duplicate_group_name_conflicts(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """A second group with the same name in the tenant is 409 with a problem envelope."""
     h = admin_headers(tenant)
@@ -48,7 +48,7 @@ async def test_duplicate_group_name_conflicts(
 
 
 async def test_get_list_and_name_prefix_pagination(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Pages of size 1 walk every group exactly once; name_prefix filters the scan."""
     h = admin_headers(tenant)
@@ -76,7 +76,7 @@ async def test_get_list_and_name_prefix_pagination(
 
 
 async def test_bad_limit_and_cursor_are_400(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Out-of-range limit and malformed cursor are rejected before any data access."""
     h = admin_headers(tenant)
@@ -92,7 +92,7 @@ async def test_bad_limit_and_cursor_are_400(
 
 
 async def test_patch_requires_matching_if_match(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """PATCH with a stale If-Match is 412; with the current ETag it updates."""
     h = admin_headers(tenant)
@@ -112,7 +112,7 @@ async def test_patch_requires_matching_if_match(
 
 
 async def test_patch_rejects_invalid_policy_and_renames_uniquely(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """A bad policy is 422; renaming onto an existing name is 409; empty PATCH is no-op 200."""
     h = admin_headers(tenant)
@@ -129,7 +129,7 @@ async def test_patch_rejects_invalid_policy_and_renames_uniquely(
 
 
 async def test_delete_and_missing_group_404(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Delete returns 204 once; the group is then 404; malformed ids are 404, not 500."""
     h = admin_headers(tenant)
@@ -141,15 +141,14 @@ async def test_delete_and_missing_group_404(
 
 
 async def test_members_replace_and_unknown_agent_404(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Membership is replaced atomically from the request set; an unknown agent is 404."""
     h = admin_headers(tenant)
     g = await _create_group(client, h, "members")
-    spiffe = "spiffe://penguintech.io/test/penguind/"
     a1 = await client.post(
         "/api/v1/agents",
-        json={"spiffe_id": spiffe + str(uuid.uuid4()), "platform": 1, "agent_version": "0.1.0"},
+        json={"spiffe_id": spiffe_for(tenant), "platform": 1, "agent_version": "0.1.0"},
         headers=h,
     )
     a1_id = (await a1.get_json())["data"]["id"]

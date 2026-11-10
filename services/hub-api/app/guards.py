@@ -25,7 +25,13 @@ from app.auth import (
 )
 from app.context import hub
 from app.models import AgentStatus, TenantDB
-from app.models.identity import resolve_agent_by_spiffe, resolve_agent_tenant
+from app.models.identity import (
+    ensure_tenant,
+    resolve_agent_by_spiffe,
+    resolve_agent_tenant,
+    tenant_public_id,
+)
+from app.mtls import parse_agent_spiffe
 from app.problems import forbidden, gone, not_found, rate_limited, unauthorized
 
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
@@ -39,6 +45,7 @@ class AdminPrincipal:
 
     subject: str
     tenant_id: int
+    tenant_public_id: uuid.UUID
     scopes: frozenset[str]
 
 
@@ -117,7 +124,7 @@ def require_admin(scope: str) -> Callable[[F], F]:
                 ctx.telemetry.instruments.auth_failures.add(1, {"plane": "admin"})
                 raise unauthorized(str(exc)) from exc
             try:
-                tenant_id = tenant_from_admin_claims(claims)
+                tenant_pid = tenant_from_admin_claims(claims)
             except TokenInvalidError as exc:
                 ctx.telemetry.instruments.auth_failures.add(1, {"plane": "admin"})
                 raise forbidden(str(exc)) from exc
@@ -127,7 +134,8 @@ def require_admin(scope: str) -> Callable[[F], F]:
                 raise unauthorized(str(exc)) from exc
             if scope not in scopes:
                 raise forbidden(f"scope {scope} required")
-            g.admin = AdminPrincipal(str(claims["sub"]), tenant_id, scopes)
+            tenant_id = await asyncio.to_thread(ensure_tenant, ctx.db, tenant_pid)
+            g.admin = AdminPrincipal(str(claims["sub"]), tenant_id, tenant_pid, scopes)
             return await fn(*args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
@@ -135,21 +143,40 @@ def require_admin(scope: str) -> Callable[[F], F]:
     return deco
 
 
-async def _mtls_identity(spiffe_uri: str) -> tuple[uuid.UUID, int]:
-    """Resolve a trusted SPIFFE URI to its registered agent; never read an id from the path.
-
-    The URI must match a registered ``spiffe_id`` exactly; agent id and tenant come from that row.
-    """
-    ctx = hub()
-    row = await asyncio.to_thread(resolve_agent_by_spiffe, ctx.db, spiffe_uri)
+def _mtls_lookup(db: Any, spiffe_uri: str, trust_domain: str) -> tuple[uuid.UUID, int] | str:
+    """Blocking part of mTLS resolution; returns (agent id, tenant id) or a failure reason."""
+    parsed = parse_agent_spiffe(spiffe_uri, trust_domain)
+    if parsed is None:
+        return "malformed"
+    row = resolve_agent_by_spiffe(db, spiffe_uri)
     if row is None:
-        ctx.telemetry.instruments.auth_failures.add(1, {"plane": "agent", "reason": "unregistered"})
-        raise unauthorized("unregistered agent identity")
+        return "unregistered"
+    if tenant_public_id(db, int(row.tenant_id)) != parsed[0]:
+        return "tenant_mismatch"
     return uuid.UUID(str(row.public_id)), int(row.tenant_id)
 
 
-async def _agent_identity() -> tuple[uuid.UUID | None, int | None, frozenset[str], int | None]:
-    """Return (path-free agent id, JWT-claimed tenant, scopes, mTLS row tenant).
+async def _mtls_identity(spiffe_uri: str) -> tuple[uuid.UUID, int]:
+    """Resolve a trusted SPIFFE URI to its registered agent; never read an id from the path.
+
+    The URI must have the form ``spiffe://<trust-domain>/tenant/<tenant public_id>/agent/<id>``
+    with the configured trust domain, match a registered ``spiffe_id`` exactly, and its tenant
+    segment must equal the registered row's tenant. Agent id and tenant come from that row.
+    """
+    ctx = hub()
+    found = await asyncio.to_thread(
+        _mtls_lookup, ctx.db, spiffe_uri, ctx.settings.spiffe_trust_domain
+    )
+    if isinstance(found, str):
+        ctx.telemetry.instruments.auth_failures.add(1, {"plane": "agent", "reason": found})
+        raise unauthorized("unregistered agent identity")
+    return found
+
+
+async def _agent_identity() -> tuple[
+    uuid.UUID | None, uuid.UUID | None, frozenset[str], int | None
+]:
+    """Return (path-free agent id, JWT-claimed tenant public_id, scopes, mTLS row tenant id).
 
     Exactly one identity source is used: a trusted SPIFFE URI (mTLS) wins over a bearer JWT.
     """
@@ -179,8 +206,10 @@ async def authenticate_agent(scope: str) -> AgentPrincipal:
         owner = await asyncio.to_thread(resolve_agent_tenant, ctx.db, agent_pid)
     if owner is None:
         raise unauthorized("unknown agent")
-    if jwt_tenant is not None and jwt_tenant != owner:
-        raise forbidden("tenant claim does not match agent")
+    if jwt_tenant is not None:
+        owner_pid = await asyncio.to_thread(tenant_public_id, ctx.db, owner)
+        if jwt_tenant != owner_pid:
+            raise forbidden("tenant claim does not match agent")
     tdb = TenantDB(ctx.db, owner)
     agent = await asyncio.to_thread(tdb.get, "agents", agent_pid)
     if agent is None:

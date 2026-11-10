@@ -1,27 +1,31 @@
 """Credential verification: OIDC bearer tokens for admins, machine JWTs for agents.
 
-Admin tokens are verified against the OIDC issuer's JWKS (resource-server role, no client
-secret needed). Agent machine JWTs are signed by the hub itself with HS256 from
-HUB_AGENT_JWT_SECRET; the hub never holds module-signing keys.
+Admin tokens are verified by penguin-aaa (OIDC relying party, issuer JWKS). Agent machine JWTs
+are signed and verified by the hub itself with HS256 from HUB_AGENT_JWT_SECRET, because
+penguin-aaa's verifiers are asymmetric-only and its provider needs a managed keystore; the
+hub never holds module-signing keys. The ``tenant`` claim is always the tenant public_id UUID.
 """
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-import httpx
 import jwt
-from jwt import PyJWKClient
+from penguin_aaa.authn import OIDCRelyingParty, OIDCRPConfig
+from pydantic import ValidationError
 
 AGENT_JWT_ISSUER = "hub-api"
 AGENT_JWT_AUDIENCE = "hub-api-agent"
 _OIDC_ALGORITHMS = ["RS256", "ES256"]
 _AGENT_ALGORITHM = "HS256"
+# The hub is a resource server: it never runs the authorization-code flow, so these two
+# penguin-aaa config fields are required by the library but unused here.
+_UNUSED_RP_SECRET = "unused-resource-server"  # noqa: S105 # nosec B105 - placeholder, not a secret
+_UNUSED_RP_REDIRECT = "https://localhost/unused"
 
 
 class TokenInvalidError(Exception):
@@ -39,6 +43,23 @@ def parse_scopes(raw: Any) -> frozenset[str]:
     raise TokenInvalidError("scope claim must be a string or list of strings")
 
 
+def parse_tenant_claim(raw: Any) -> uuid.UUID:
+    """Return the tenant public_id UUID from a ``tenant`` claim; anything else is invalid.
+
+    Only the canonical lowercase hyphenated form is accepted so one tenant has one spelling.
+    """
+    if raw is None or raw == "":
+        raise TokenInvalidError("tenant claim required")
+    text = str(raw)
+    try:
+        tenant = uuid.UUID(text)
+    except ValueError as exc:
+        raise TokenInvalidError("tenant claim must be a tenant public_id UUID") from exc
+    if str(tenant) != text:
+        raise TokenInvalidError("tenant claim must be a canonical lowercase UUID")
+    return tenant
+
+
 class TokenVerifier(Protocol):
     """Anything that turns an admin bearer token into its verified claims."""
 
@@ -47,41 +68,35 @@ class TokenVerifier(Protocol):
         ...
 
 
-@dataclass(slots=True)
 class OidcVerifier:
-    """Verify OIDC access tokens with the issuer's JWKS (discovered once, lazily)."""
+    """Verify admin OIDC access tokens with penguin-aaa's OIDC relying party.
 
-    issuer: str
-    audience: str
-    _jwks: PyJWKClient | None = field(default=None, init=False)
+    penguin-aaa discovers the issuer's JWKS, checks signature, issuer, audience, expiry and
+    requires the ``tenant`` claim through its strict ``Claims`` model. This class only maps
+    its failures onto TokenInvalidError and its ``Claims`` onto a plain mapping.
+    """
 
-    def _client(self) -> PyJWKClient:
-        """Return the JWKS client, discovering jwks_uri from the issuer on first use."""
-        if self._jwks is None:
-            meta = httpx.get(f"{self.issuer}/.well-known/openid-configuration", timeout=5.0)
-            meta.raise_for_status()
-            self._jwks = PyJWKClient(str(meta.json()["jwks_uri"]), cache_keys=True)
-        return self._jwks
-
-    def _verify_sync(self, token: str) -> Mapping[str, Any]:
-        """Blocking verification; run in a worker thread by ``verify``."""
-        try:
-            key = self._client().get_signing_key_from_jwt(token).key
-            claims: Mapping[str, Any] = jwt.decode(
-                token,
-                key,
-                algorithms=_OIDC_ALGORITHMS,
-                audience=self.audience,
-                issuer=self.issuer,
-                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+    def __init__(self, issuer: str, audience: str) -> None:
+        """Configure the relying party for ``issuer`` with ``audience`` as the expected aud."""
+        self._rp = OIDCRelyingParty(
+            OIDCRPConfig(
+                issuer_url=issuer,
+                client_id=audience,
+                client_secret=_UNUSED_RP_SECRET,
+                redirect_url=_UNUSED_RP_REDIRECT,
+                algorithms=list(_OIDC_ALGORITHMS),
             )
-        except (jwt.PyJWTError, httpx.HTTPError, KeyError, ValueError) as exc:
-            raise TokenInvalidError(str(exc)) from exc
-        return claims
+        )
 
     async def verify(self, token: str) -> Mapping[str, Any]:
-        """Verify an admin token without blocking the event loop."""
-        return await asyncio.to_thread(self._verify_sync, token)
+        """Validate ``token`` via penguin-aaa and return sub, scope and tenant claims."""
+        try:
+            claims = await self._rp.validate_token(token)
+        except (jwt.PyJWTError, ValidationError, ValueError) as exc:
+            raise TokenInvalidError(str(exc)) from exc
+        except Exception as exc:  # httpx.HTTPError during discovery and similar network faults
+            raise TokenInvalidError(f"token verification failed: {type(exc).__name__}") from exc
+        return {"sub": claims.sub, "scope": list(claims.scope), "tenant": claims.tenant}
 
 
 @dataclass(slots=True, frozen=True)
@@ -89,18 +104,18 @@ class AgentClaims:
     """Verified machine-JWT claims for one agent."""
 
     agent_public_id: uuid.UUID
-    tenant: int
+    tenant: uuid.UUID
     scopes: frozenset[str]
 
 
 def issue_agent_token(
     secret: str,
     agent_public_id: uuid.UUID,
-    tenant: int,
+    tenant: uuid.UUID,
     scopes: frozenset[str],
     ttl_s: int,
 ) -> str:
-    """Sign a machine JWT (<=1h) for an agent: sub=agent public_id, tenant, scope."""
+    """Sign a machine JWT (<=1h): sub=agent public_id, tenant=tenant public_id, scope."""
     now = dt.datetime.now(dt.UTC)
     payload = {
         "iss": AGENT_JWT_ISSUER,
@@ -125,24 +140,15 @@ def verify_agent_token(secret: str, token: str) -> AgentClaims:
             issuer=AGENT_JWT_ISSUER,
             options={"require": ["exp", "iat", "iss", "aud", "sub", "tenant"]},
         )
-        tenant_raw = str(claims["tenant"])
-        if not tenant_raw.isdigit() or int(tenant_raw) <= 0:
-            raise TokenInvalidError("tenant claim must be a positive integer")
         return AgentClaims(
             agent_public_id=uuid.UUID(str(claims["sub"])),
-            tenant=int(tenant_raw),
+            tenant=parse_tenant_claim(claims["tenant"]),
             scopes=parse_scopes(claims.get("scope")),
         )
     except (jwt.PyJWTError, ValueError, KeyError) as exc:
         raise TokenInvalidError(str(exc)) from exc
 
 
-def tenant_from_admin_claims(claims: Mapping[str, Any]) -> int:
-    """Return the positive integer tenant id from an admin token; missing or invalid = error."""
-    raw = claims.get("tenant")
-    if raw is None or raw == "":
-        raise TokenInvalidError("tenant claim required")
-    text = str(raw)
-    if not text.isdigit() or int(text) <= 0:
-        raise TokenInvalidError("tenant claim must be a positive integer")
-    return int(text)
+def tenant_from_admin_claims(claims: Mapping[str, Any]) -> uuid.UUID:
+    """Return the tenant public_id UUID from an admin token; missing or invalid = error."""
+    return parse_tenant_claim(claims.get("tenant"))

@@ -46,6 +46,9 @@ config:
   # inside HUB_TRUSTED_PROXY_CIDRS (empty = refuse). The ingress MUST overwrite the header:
   # Envoy forward_client_cert_details: SANITIZE_SET. Otherwise clients can inject XFCC.
   HUB_TRUST_FORWARDED_CERT: "0"
+  # Agent SVIDs must be spiffe://<this domain>/tenant/<tenant public_id>/agent/<id>; any other
+  # trust domain is refused. Required at boot (the hub fails loudly when unset).
+  HUB_SPIFFE_TRUST_DOMAIN: "penguintech.io"
   HUB_TRUSTED_PROXY_CIDRS: ""   # e.g. "10.42.0.0/16" (ingress-nginx / Envoy pod CIDR)
 
 # References to pre-existing Secrets. Never put values here.

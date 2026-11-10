@@ -6,6 +6,7 @@ pydantic==2.14.3
 hypercorn==0.17.3
 penguin-dal==0.4.1
 penguin-utils==0.3.0
+penguin-aaa==0.2.1
 sqlalchemy==2.1.8
 alembic==1.20.1
 psycopg2-binary==2.9.13

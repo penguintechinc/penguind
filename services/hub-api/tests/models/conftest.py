@@ -7,7 +7,7 @@ from penguin_dal import DB
 
 from app.models import TenantDB
 
-_tenants = count(1)
+_tenants = count(10_000_000)  # far above ids the tenants identity column hands out
 
 
 @pytest.fixture
@@ -19,4 +19,4 @@ def tdb(db: DB) -> TenantDB:
 @pytest.fixture
 def other(db: DB) -> TenantDB:
     """A second, distinct tenant for isolation tests."""
-    return TenantDB(db, 100_000 + next(_tenants))
+    return TenantDB(db, 100_000_000 + next(_tenants))

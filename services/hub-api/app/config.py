@@ -43,6 +43,7 @@ class Settings:
     trusted_pubkeys: tuple[str, ...]
     trust_forwarded_cert: bool
     trusted_proxy_cidrs: tuple[IPv4Network | IPv6Network, ...]
+    spiffe_trust_domain: str
     posthog_api_key: str | None
     posthog_host: str | None
     max_upload_bytes: int
@@ -69,6 +70,7 @@ class Settings:
             trusted_pubkeys=keys,
             trust_forwarded_cert=_flag("HUB_TRUST_FORWARDED_CERT"),
             trusted_proxy_cidrs=_cidrs(os.environ.get("HUB_TRUSTED_PROXY_CIDRS", "")),
+            spiffe_trust_domain=_env("HUB_SPIFFE_TRUST_DOMAIN").strip().lower(),
             posthog_api_key=os.environ.get("POSTHOG_API_KEY") or None,
             posthog_host=os.environ.get("POSTHOG_HOST") or None,
             max_upload_bytes=int(os.environ.get("HUB_MAX_UPLOAD_BYTES", str(64 * 1024 * 1024))),

@@ -5,18 +5,21 @@ from collections.abc import Callable
 
 from quart.testing import QuartClient
 
-from tests.api.helpers import SPIFFE, create_group, envelope_data
+from tests.api.helpers import create_group, envelope_data, spiffe_for
 
 AGENTS = "/api/v1/agents"
 FLAGS = "/api/v1/flags"
 
 
 async def _register(
-    client: QuartClient, h: dict[str, str], group_ids: list[str] | None = None
+    client: QuartClient,
+    h: dict[str, str],
+    tenant: uuid.UUID,
+    group_ids: list[str] | None = None,
 ) -> dict[str, object]:
     """Pre-register an agent and return its data; asserts 201."""
     body: dict[str, object] = {
-        "spiffe_id": SPIFFE + str(uuid.uuid4()),
+        "spiffe_id": spiffe_for(tenant),
         "platform": 1,
         "agent_version": "0.1.0",
     }
@@ -28,11 +31,11 @@ async def _register(
 
 
 async def test_register_agent_exact_fields_and_duplicate_spiffe(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Pre-registration returns the Agent field set; reusing a SPIFFE id is 409; bad URI is 400."""
     h = admin_headers(tenant)
-    spiffe = SPIFFE + str(uuid.uuid4())
+    spiffe = spiffe_for(tenant)
     first = await client.post(
         AGENTS, json={"spiffe_id": spiffe, "platform": 1, "agent_version": "0.1.0"}, headers=h
     )
@@ -53,7 +56,7 @@ async def test_register_agent_exact_fields_and_duplicate_spiffe(
     bad = {"spiffe_id": "http://nope", "platform": 1, "agent_version": "0.1.0"}
     assert (await client.post(AGENTS, json=bad, headers=h)).status_code == 400
     unknown_platform = {
-        "spiffe_id": SPIFFE + str(uuid.uuid4()),
+        "spiffe_id": spiffe_for(tenant),
         "platform": 9,
         "agent_version": "0.1.0",
     }
@@ -61,12 +64,12 @@ async def test_register_agent_exact_fields_and_duplicate_spiffe(
 
 
 async def test_register_with_unknown_group_is_404(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Membership in a group outside the tenant (or nonexistent) is 404."""
     h = admin_headers(tenant)
     body = {
-        "spiffe_id": SPIFFE + str(uuid.uuid4()),
+        "spiffe_id": spiffe_for(tenant),
         "platform": 1,
         "agent_version": "0.1.0",
         "group_ids": [str(uuid.uuid4())],
@@ -75,13 +78,13 @@ async def test_register_with_unknown_group_is_404(
 
 
 async def test_list_agents_filters_group_status_stale(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Agents list filters by group membership, computed status and staleness, with paging."""
     h = admin_headers(tenant)
     g = await create_group(client, h, "fleet")
-    a = await _register(client, h, [g["id"]])
-    b = await _register(client, h)
+    a = await _register(client, h, tenant, [g["id"]])
+    b = await _register(client, h, tenant)
     in_group = envelope_data(
         await (await client.get(AGENTS, query_string={"group_id": g["id"]}, headers=h)).get_json()
     )
@@ -103,11 +106,11 @@ async def test_list_agents_filters_group_status_stale(
 
 
 async def test_agent_detail_has_effective_policy_and_override_etag(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Detail carries override, effective config and last_report; override PUT honours If-Match."""
     h = admin_headers(tenant)
-    a = await _register(client, h)
+    a = await _register(client, h, tenant)
     aid = a["id"]
     detail = await client.get(f"/api/v1/agents/{aid}", headers=h)
     data = envelope_data(await detail.get_json())
@@ -135,7 +138,7 @@ async def test_agent_detail_has_effective_policy_and_override_etag(
 
 
 async def test_flags_upsert_list_delete_and_scope_rules(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Flags upsert in place, validate key/scope, filter by group, and delete cleanly."""
     h = admin_headers(tenant)
@@ -184,7 +187,7 @@ async def test_flags_upsert_list_delete_and_scope_rules(
 
 
 async def test_audit_events_record_every_admin_write(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Each admin write appends one audit event with int action codes and no PII."""
     h = admin_headers(tenant)
@@ -202,13 +205,13 @@ async def test_audit_events_record_every_admin_write(
 
 
 async def test_cross_tenant_resources_are_invisible(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Tenant B cannot list, read, patch, delete or reference tenant A's objects (404 or absent)."""
     a = admin_headers(tenant)
-    b = admin_headers(tenant + 500_000)
+    b = admin_headers(uuid.uuid4())
     group = await create_group(client, a, "private-to-a")
-    agent = await _register(client, a, [group["id"]])
+    agent = await _register(client, a, tenant, [group["id"]])
     assert (await client.get(f"/api/v1/groups/{group['id']}", headers=b)).status_code == 404
     assert (
         await client.patch(f"/api/v1/groups/{group['id']}", json={"description": "x"}, headers=b)

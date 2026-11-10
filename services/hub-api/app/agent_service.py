@@ -21,7 +21,7 @@ from app.dto import EnrollRequest, StatusReport, TokenResponse
 from app.envelope import iso
 from app.guards import AgentPrincipal
 from app.models import AgentStatus, ApplyResult, ModuleStatus, TenantDB, effective_config
-from app.models.identity import resolve_bootstrap, resolve_refresh
+from app.models.identity import resolve_bootstrap, resolve_refresh, tenant_public_id
 from app.models.policy import ConfigRevision
 from app.problems import bad_request, gone, not_found, unauthorized
 from app.service import digest, parse_pid
@@ -66,7 +66,7 @@ def _token_response(ctx: HubContext, agent: Row, tenant_id: int, refresh: str) -
     access = issue_agent_token(
         ctx.settings.agent_jwt_secret,
         agent.public_id,
-        tenant_id,
+        tenant_public_id(ctx.db, tenant_id),
         frozenset({"hub:agent:sync", "hub:agent:report"}),
         ttl,
     )

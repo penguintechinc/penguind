@@ -45,28 +45,40 @@ def test_parse_scopes_accepts_string_list_and_none() -> None:
         parse_scopes([1])
 
 
-@pytest.mark.parametrize("claims", [{}, {"tenant": ""}, {"tenant": "abc"}, {"tenant": "0"}])
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {},
+        {"tenant": ""},
+        {"tenant": "abc"},
+        {"tenant": "42"},
+        {"tenant": "0"},
+        {"tenant": str(uuid.uuid4()).upper()},
+    ],
+)
 def test_admin_tenant_claim_rejections(claims: dict[str, Any]) -> None:
-    """Missing, empty, non-numeric and non-positive tenant claims are refused."""
+    """Missing, empty, integer, non-UUID and non-canonical tenant claims are refused."""
     with pytest.raises(TokenInvalidError):
         tenant_from_admin_claims(claims)
 
 
-def test_admin_tenant_claim_accepts_integer_string() -> None:
-    """A positive integer tenant claim resolves to its int value."""
-    assert tenant_from_admin_claims({"tenant": "42"}) == 42
+def test_admin_tenant_claim_accepts_canonical_uuid() -> None:
+    """A canonical lowercase tenant public_id UUID resolves to its UUID value."""
+    tenant = uuid.uuid4()
+    assert tenant_from_admin_claims({"tenant": str(tenant)}) == tenant
 
 
 def test_agent_jwt_round_trip_and_rejections() -> None:
     """A signed agent JWT verifies; wrong secret, bad tenant and bad sub are rejected."""
     pid = uuid.uuid4()
-    token = issue_agent_token(AGENT_SECRET, pid, 7, frozenset({"hub:agent:sync"}), 60)
+    tenant = uuid.uuid4()
+    token = issue_agent_token(AGENT_SECRET, pid, tenant, frozenset({"hub:agent:sync"}), 60)
     claims = verify_agent_token(AGENT_SECRET, token)
-    assert claims.agent_public_id == pid and claims.tenant == 7
+    assert claims.agent_public_id == pid and claims.tenant == tenant
     assert claims.scopes == frozenset({"hub:agent:sync"})
     with pytest.raises(TokenInvalidError):
         verify_agent_token("x" * 40, token)
-    bad_tenant = issue_agent_token(AGENT_SECRET, pid, 7, frozenset(), 60)
+    bad_tenant = issue_agent_token(AGENT_SECRET, pid, tenant, frozenset(), 60)
     import jwt
 
     forged = jwt.encode(
@@ -319,6 +331,7 @@ def _settings(*, trust: bool) -> Settings:
         trusted_pubkeys=(),
         trust_forwarded_cert=trust,
         trusted_proxy_cidrs=(),
+        spiffe_trust_domain="penguintech.io",
         posthog_api_key=None,
         posthog_host=None,
         max_upload_bytes=1024,
@@ -348,6 +361,7 @@ def test_settings_from_env_requires_values(monkeypatch: pytest.MonkeyPatch) -> N
         "OIDC_AUDIENCE": "hub",
         "HUB_AGENT_JWT_SECRET": "short",
         "HUB_S3_BUCKET": "bkt",
+        "HUB_SPIFFE_TRUST_DOMAIN": " Penguintech.IO ",
         "HUB_TRUSTED_PUBKEYS": "k1, k2",
         "HUB_TRUST_FORWARDED_CERT": "1",
         "POSTHOG_API_KEY": "phc_x",
@@ -361,3 +375,4 @@ def test_settings_from_env_requires_values(monkeypatch: pytest.MonkeyPatch) -> N
     assert loaded.base_url == "https://hub.example" and loaded.trusted_pubkeys == ("k1", "k2")
     assert loaded.trust_forwarded_cert is True and loaded.posthog_api_key == "phc_x"
     assert loaded.agent_token_ttl_s == 3600
+    assert loaded.spiffe_trust_domain == "penguintech.io"

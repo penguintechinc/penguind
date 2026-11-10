@@ -14,7 +14,7 @@ import re
 import uuid
 from typing import Any
 
-from quart import Blueprint, request
+from quart import Blueprint, g, request
 from quart_schema import validate_request, validate_response
 
 from app import service
@@ -290,7 +290,15 @@ def _list_agents_sync(
 async def create_agent(data: AgentCreate) -> Any:
     """Pre-register an agent's SPIFFE identity and group membership."""
     tdb = admin_tdb()
-    row = await run(service.create_agent, tdb, data, actor())
+    row = await run(
+        service.create_agent,
+        tdb,
+        data,
+        actor(),
+        db=hub().db,
+        tenant_pid=g.admin.tenant_public_id,
+        trust_domain=hub().settings.spiffe_trust_domain,
+    )
     dto = await run(_agent_dto, tdb, row, dt.datetime.now(dt.UTC))
     return envelope(Agent, dto), 201
 
@@ -484,7 +492,7 @@ async def upload_module() -> Any:
         ctx.telemetry.instruments.upload_bytes.record(size)
         tdb = admin_tdb()
         await run(service.ensure_version_free, tdb, module_id, version)  # 409 before any storage
-        key = f"modules/{tdb.tenant_id}/{module_id}/{version}/{sha}.wasm"
+        key = f"modules/{g.admin.tenant_public_id}/{module_id}/{version}/{sha}.wasm"
         try:
             await ctx.blobs.store(key, spool, size)
         except BlobError as exc:

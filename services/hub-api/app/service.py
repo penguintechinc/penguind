@@ -13,7 +13,7 @@ import secrets
 import uuid
 from typing import Any
 
-from penguin_dal import Row
+from penguin_dal import DB, Row
 
 from app.context import encode_cursor
 from app.dto import (
@@ -37,8 +37,17 @@ from app.models import (
     TenantViolationError,
     effective_config,
 )
+from app.models.identity import is_unique_violation, spiffe_registered
 from app.models.policy import ConfigRevision, Policy, PolicyError
-from app.problems import bad_request, conflict, not_found, precondition_failed, unprocessable
+from app.mtls import parse_agent_spiffe
+from app.problems import (
+    bad_request,
+    conflict,
+    forbidden,
+    not_found,
+    precondition_failed,
+    unprocessable,
+)
 
 FLAG_KEY_RE = re.compile(r"^[a-z0-9-]+\.[a-z0-9.-]+$")
 BOOTSTRAP_TTL_MIN_S = 60
@@ -277,12 +286,32 @@ def computed_status(row: Row, stale_after_s: int, now: dt.datetime) -> int:
     return int(AgentStatus.ACTIVE)
 
 
-def create_agent(tdb: TenantDB, body: AgentCreate, actor: str) -> Row:
-    """Pre-register an agent's SPIFFE identity and group membership (no credentials issued)."""
+def create_agent(
+    tdb: TenantDB,
+    body: AgentCreate,
+    actor: str,
+    *,
+    db: DB,
+    tenant_pid: uuid.UUID,
+    trust_domain: str,
+) -> Row:
+    """Pre-register an agent's SPIFFE identity and group membership (no credentials issued).
+
+    The SPIFFE id must be ``spiffe://<trust-domain>/tenant/<tenant public_id>/agent/<id>`` for
+    the caller's own tenant, and is unique across ALL tenants: it is checked globally before the
+    insert, and the database's unique constraint settles any race atomically (409).
+    """
     spiffe = body.spiffe_id.strip()
-    if not spiffe.startswith("spiffe://") or len(spiffe) > 512:
-        raise bad_request("spiffe_id must be a spiffe:// URI")
-    if tdb.count("agents", tdb.field("agents", "spiffe_id") == spiffe):
+    if len(spiffe) > 512:
+        raise bad_request("spiffe_id too long")
+    parsed = parse_agent_spiffe(spiffe, trust_domain)
+    if parsed is None:
+        raise bad_request(
+            f"spiffe_id must be spiffe://{trust_domain}/tenant/<tenant public_id>/agent/<id>"
+        )
+    if parsed[0] != tenant_pid:
+        raise forbidden("spiffe_id tenant segment does not match caller's tenant")
+    if spiffe_registered(db, spiffe):
         raise conflict("spiffe_id already registered")
     if body.platform not in {int(p) for p in Platform}:
         raise unprocessable("unknown platform code")
@@ -292,13 +321,18 @@ def create_agent(tdb: TenantDB, body: AgentCreate, actor: str) -> Row:
         if group is None:
             raise not_found("group")
         groups.append(group)
-    row = tdb.insert(
-        "agents",
-        status=int(AgentStatus.ACTIVE),
-        platform=body.platform,
-        agent_version=body.agent_version,
-        spiffe_id=spiffe,
-    )
+    try:
+        row = tdb.insert(
+            "agents",
+            status=int(AgentStatus.ACTIVE),
+            platform=body.platform,
+            agent_version=body.agent_version,
+            spiffe_id=spiffe,
+        )
+    except Exception as exc:
+        if is_unique_violation(exc):
+            raise conflict("spiffe_id already registered") from exc
+        raise
     for group in groups:
         tdb.insert("group_members", group_id=group.id, agent_id=row.id)
     write_audit(tdb, actor, AuditAction.AGENT_CREATE, TargetType.AGENT, row.public_id)

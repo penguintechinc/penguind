@@ -1167,14 +1167,14 @@ components:
             hub:bootstrap:write: bootstrap write
       description: 'OIDC provider; pdcli uses the RFC 8628 device grant (not expressible in OAS 3.1).
 
-        pdcli admin tokens via OIDC device flow. Token MUST carry `tenant`; scopes are
+        pdcli admin tokens via OIDC device flow. Token MUST carry `tenant` (the tenant public_id UUID); scopes are
 
         `hub:<resource>:<read|write>`. Tenant mismatch = 403.
 
         '
     mtls:
       type: mutualTLS
-      description: SPIFFE X.509-SVID `spiffe://penguintech.io/<env>/penguind/<agent public_id>`.
+      description: SPIFFE X.509-SVID `spiffe://<trust-domain>/tenant/<tenant public_id>/agent/<id>`.
     agentJwt:
       type: oauth2
       flows:
@@ -2037,8 +2037,8 @@ components:
         spiffe_id:
           type: string
           maxLength: 512
-          pattern: ^spiffe://
-          description: Agent SPIFFE ID `spiffe://penguintech.io/<env>/penguind/<agent public_id>`; the agent public_id is allocated by the hub, so pre-registration uses the SPIFFE ID the agent will present.
+          pattern: ^spiffe://[A-Za-z0-9.-]+/tenant/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/agent/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$
+          description: Agent SPIFFE ID `spiffe://<trust-domain>/tenant/<tenant public_id>/agent/<id>`. The trust domain is the hub's configured one, the tenant segment must be the caller's own tenant public_id (403 otherwise), and the ID is unique across all tenants (409 if registered).
         platform:
           $ref: '#/components/schemas/Platform'
         agent_version:

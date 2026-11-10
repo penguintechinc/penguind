@@ -9,15 +9,21 @@ from quart.testing import QuartClient
 from app.auth import issue_agent_token
 
 AGENT_SECRET = "s" * 48
-SPIFFE = "spiffe://penguintech.io/test/penguind/"
+TRUST_DOMAIN = "penguintech.io"
+SPIFFE = f"spiffe://{TRUST_DOMAIN}/tenant/"
 
 
 def agent_headers(
-    agent_pid: uuid.UUID, tenant: int, scopes: str = "hub:agent:sync hub:agent:report"
+    agent_pid: uuid.UUID, tenant: uuid.UUID, scopes: str = "hub:agent:sync hub:agent:report"
 ) -> dict[str, str]:
     """Return a Bearer header with a machine JWT for an agent (signed with the test secret)."""
     token = issue_agent_token(AGENT_SECRET, agent_pid, tenant, frozenset(scopes.split()), 3600)
     return {"Authorization": f"Bearer {token}"}
+
+
+def spiffe_for(tenant: uuid.UUID, agent_id: str | None = None) -> str:
+    """Return a well-formed agent SPIFFE URI for ``tenant`` (fresh agent id unless given)."""
+    return f"{SPIFFE}{tenant}/agent/{agent_id or uuid.uuid4()}"
 
 
 def envelope_data(body: Mapping[str, Any]) -> Any:

@@ -41,7 +41,7 @@ async def _enroll(client: QuartClient, secret: str, platform: int = 1) -> Any:
 
 
 async def test_bootstrap_secret_shown_once_and_metadata_only_in_list(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Creation returns the secret; the list returns metadata without any token field."""
     h = admin_headers(tenant)
@@ -54,7 +54,7 @@ async def test_bootstrap_secret_shown_once_and_metadata_only_in_list(
 
 
 async def test_bootstrap_validation_and_revocation(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """TTL bounds and unknown groups are 400; an unused token can be revoked, a used one cannot."""
     h = admin_headers(tenant)
@@ -73,7 +73,7 @@ async def test_bootstrap_validation_and_revocation(
 
 
 async def test_enroll_joins_groups_and_bootstrap_is_single_use(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Enrollment returns the token pair, joins the token's groups, and a reused token is 401."""
     h = admin_headers(tenant)
@@ -96,7 +96,7 @@ async def test_enroll_joins_groups_and_bootstrap_is_single_use(
 
 
 async def test_enroll_rejects_missing_unknown_expired_and_csr(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int, db: DB
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID, db: DB
 ) -> None:
     """No bearer, an unknown secret, an expired token, or a CSR are all refused."""
     assert (
@@ -138,7 +138,7 @@ async def test_enroll_rate_limited_per_client(client: QuartClient, app: Quart) -
 
 
 async def test_refresh_rotates_and_reuse_revokes_chain(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Refresh issues a new pair; reusing the old refresh token revokes the whole chain."""
     h = admin_headers(tenant)
@@ -160,7 +160,7 @@ async def test_refresh_rotates_and_reuse_revokes_chain(
 
 
 async def test_revoked_agent_refresh_is_401(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """A revoked agent cannot rotate its refresh token and is told to re-enroll (410)."""
     h = admin_headers(tenant)
@@ -174,7 +174,7 @@ async def test_revoked_agent_refresh_is_401(
 
 
 async def test_refresh_gone_when_agent_revoked_but_token_live(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int, db: DB
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID, db: DB
 ) -> None:
     """If the agent is revoked without its refresh chain being revoked, refresh answers 410."""
     from app.models import AgentStatus
@@ -188,7 +188,7 @@ async def test_refresh_gone_when_agent_revoked_but_token_live(
 
 
 async def test_sync_manifest_etag_and_304(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Sync returns the exact bundle shape with ETag; If-None-Match yields 304 with no body."""
     h = admin_headers(tenant)
@@ -217,7 +217,7 @@ async def test_sync_manifest_etag_and_304(
 
 
 async def test_sync_flags_are_restrict_only(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """A group-scoped OFF flag restricts agents in that group; tenant ON flags do not grant."""
     h = admin_headers(tenant)
@@ -250,7 +250,7 @@ async def test_sync_flags_are_restrict_only(
 
 
 async def test_sync_applies_override_limits_and_clamps(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Override limits feed poll/stale values; values below the floor are clamped up."""
     h = admin_headers(tenant)
@@ -292,7 +292,7 @@ async def _upload(
 
 
 async def test_module_upload_recomputes_sha_and_rejects_mismatch(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Upload stores a module with the server-computed sha256; a wrong claimed digest is 422."""
     h = admin_headers(tenant)
@@ -321,7 +321,7 @@ async def test_module_upload_recomputes_sha_and_rejects_mismatch(
 
 
 async def test_module_upload_input_validation(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Bad module id, SemVer, empty signature, malformed sha and a missing binary are rejected."""
     h = admin_headers(tenant)
@@ -338,7 +338,7 @@ async def test_module_upload_input_validation(
 
 
 async def test_module_upload_size_cap_streams_and_rejects(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int, app: Quart
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID, app: Quart
 ) -> None:
     """A body over the configured cap is refused with 413 while streaming, before storage."""
     h = admin_headers(tenant)
@@ -349,7 +349,7 @@ async def test_module_upload_size_cap_streams_and_rejects(
 
 
 async def test_module_upload_blob_outage_is_503(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int, app: Quart
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID, app: Quart
 ) -> None:
     """A failing blob store answers 503 and leaves no module row behind."""
     from app.blobs import BlobError
@@ -396,7 +396,7 @@ def _minisign(message: bytes) -> tuple[str, str]:
 
 async def test_module_signature_verified_when_keys_configured(
     admin_headers: Callable[..., dict[str, str]],
-    tenant: int,
+    tenant: uuid.UUID,
     db: DB,
     blobs: Any,
     verifier: Any,
@@ -431,7 +431,7 @@ async def test_module_signature_verified_when_keys_configured(
 
 
 async def test_status_report_and_binary_download(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Status is recorded for admins; binary is a 302 presigned URL for assigned modules."""
     h = admin_headers(tenant)
@@ -479,7 +479,7 @@ async def test_status_report_and_binary_download(
 
 
 async def test_yanked_module_is_removed_and_410_on_download(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Yanking drops the module from the manifest and makes its binary answer 410."""
     h = admin_headers(tenant)
@@ -505,7 +505,7 @@ async def test_yanked_module_is_removed_and_410_on_download(
 
 
 async def test_highest_version_wins_in_manifest(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """With two assigned versions of one module the manifest carries the highest SemVer."""
     h = admin_headers(tenant)
@@ -542,7 +542,7 @@ async def test_highest_version_wins_in_manifest(
 
 
 async def test_group_module_assignment_validation(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int
+    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: uuid.UUID
 ) -> None:
     """Assignments must be an array of exactly {module_version_id}; unknown ids are 422."""
     h = admin_headers(tenant)
