@@ -24,3 +24,19 @@ penguin-ipc.workspace = true
 tonic.workspace = true
 tokio.workspace = true
 clap.workspace = true
+# `pdcli hub`: HTTPS client for hub-api and the OIDC provider. Same setup as
+# penguin-update (rustls on aws-lc-rs + webpki roots, never `ring`).
+reqwest.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+url.workspace = true
+serde_json.workspace = true
+# Admin token storage in the OS keychain only; no plaintext file fallback.
+keyring.workspace = true
+
+[dev-dependencies]
+# Mock hub/IdP built from the v1.yaml envelope and problem schemas.
+wiremock.workspace = true
+base64.workspace = true
+# Test-only signing of fixture manifests; same pin as penguin-update.
+minisign = "=0.9.1"

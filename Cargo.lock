@@ -3686,12 +3686,21 @@ dependencies = [
 name = "pdcli"
 version = "0.2.0"
 dependencies = [
+ "base64 0.23.1",
  "clap",
+ "keyring",
+ "minisign",
  "penguin-cli-core",
  "penguin-ipc",
  "penguin-proto",
+ "reqwest",
+ "rustls",
+ "serde_json",
  "tokio",
  "tonic",
+ "url",
+ "webpki-roots",
+ "wiremock",
 ]
 
 [[package]]
@@ -3708,11 +3717,16 @@ dependencies = [
 name = "penguin-cli-core"
 version = "0.2.0"
 dependencies = [
+ "base64 0.23.1",
  "clap",
+ "minisign",
+ "minisign-verify",
  "penguin-proto",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tonic",
+ "url",
 ]
 
 [[package]]

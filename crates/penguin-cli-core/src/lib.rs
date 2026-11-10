@@ -22,6 +22,7 @@
 pub mod dispatch;
 pub mod error;
 pub mod flags;
+pub mod hub;
 pub mod json;
 pub mod render;
 pub mod socket;
