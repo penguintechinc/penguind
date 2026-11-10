@@ -21,7 +21,7 @@ ingress:
 networkPolicy:
   ingress:
     namespaces: []
-    entities: [host, cluster]   # NodePort via localhost arrives as host; no world
+    entities: [host]   # NodePort via localhost arrives as host; in-cluster callers go in ingress.namespaces
 secrets:
   db: {name: hub-api-db}
   s3: {name: hub-api-s3}
