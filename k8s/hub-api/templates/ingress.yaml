@@ -1,0 +1,71 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hub-api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hub-api.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ required "ingress.tlsSecretName is required" .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "hub-api.name" . }}
+                port:
+                  name: http
+{{- if ne .Values.ingress.mtls.mode "off" }}
+---
+# Agent mTLS ingress on a dedicated host: client-cert auth is a per-host (server-level)
+# setting in ingress-nginx, so it cannot be scoped to one path of the shared host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hub-api.name" . }}-agent-mtls
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hub-api.labels" . | nindent 4 }}
+  annotations:
+    {{- if eq .Values.ingress.mtls.mode "passthrough" }}
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    {{- else if eq .Values.ingress.mtls.mode "verify" }}
+    nginx.ingress.kubernetes.io/auth-tls-secret: {{ required "ingress.mtls.caSecret (namespace/name) is required for verify" .Values.ingress.mtls.caSecret | quote }}
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "2"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    {{- else }}
+    {{- fail "ingress.mtls.mode must be one of: off, passthrough, verify" }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if eq .Values.ingress.mtls.mode "verify" }}
+  tls:
+    - hosts: [{{ required "ingress.mtls.host is required" .Values.ingress.mtls.host | quote }}]
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.mtls.host is required" .Values.ingress.mtls.host | quote }}
+      http:
+        paths:
+          - path: /api/v1/agent/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "hub-api.name" . }}
+                port:
+                  name: {{ ternary "https-mtls" "http" (eq .Values.ingress.mtls.mode "passthrough") }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,20 @@
+image:
+  tag: beta-0000000000
+replicas: 1
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 250m, memory: 256Mi}
+hpa: {enabled: false}
+pdb: {enabled: false}
+config:
+  LOG_LEVEL: "info"
+  DB_POOL_SIZE: "5"
+  BASE_URL: "penguind-beta.penguintech.cloud"
+ingress:
+  host: hub-beta.penguintech.cloud
+secrets:
+  db: {name: hub-api-db}
+  s3: {name: hub-api-s3}
+  oidc: {name: hub-api-oidc}
+# Fill per-env egress destinations (postgres/s3/oidc/otel) before deploy; the
+# baseline has none, so egress stays closed until set.

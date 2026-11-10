@@ -1,0 +1,29 @@
+{{- if .Values.tetragon.enabled }}
+# Enforced exec allowlist: any execve of a binary outside this list kills the process.
+# A shell/curl/nc dropped by a compromised dependency never runs in this container.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: {{ include "hub-api.name" . }}-exec-allowlist
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hub-api.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "hub-api.selectorLabels" . | nindent 6 }}
+  kprobes:
+    - call: "sys_execve"
+      syscall: true
+      args:
+        - index: 0
+          type: "string"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "NotEqual"
+              values:
+                {{- toYaml .Values.tetragon.allowedBinaries | nindent 16 }}
+          matchActions:
+            - action: Sigkill
+{{- end }}

@@ -1,0 +1,13 @@
+image:
+  tag: ""
+  # Replace with the released image digest at release time.
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+config:
+  LOG_LEVEL: "warn"
+  DB_POOL_SIZE: "20"
+ingress:
+  host: hub.penguintech.cloud
+secrets:
+  db: {name: hub-api-db}
+  s3: {name: hub-api-s3}
+  oidc: {name: hub-api-oidc}

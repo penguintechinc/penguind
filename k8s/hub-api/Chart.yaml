@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hub-api
+description: penguind hub-api - Quart management hub for penguind agents (WASM module distribution + config/flags)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
