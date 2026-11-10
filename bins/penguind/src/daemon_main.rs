@@ -275,29 +275,27 @@ async fn run_daemon() -> Result<(), DaemonBinError> {
     // `SecretsStoreProvider` gives every module its own
     // `secrets_root.namespaced(module)` view, so `host_for` never hands two
     // modules the same store.
-    // Hub-client tokens: store chosen by run mode (desktop/server → OS keychain,
-    // daemonset → mounted K8s Secret), encrypted-file fallback (namespaced in
-    // the store above) only when the preferred one is unavailable. The keychain
-    // is probed only in desktop/server mode.
+    // Hub-client tokens: store chosen by run mode — desktop → OS keychain,
+    // daemonset → mounted K8s Secret, server/unset → encrypted file (the
+    // pre-existing behaviour; a system service has no session keyring). The
+    // keychain is probed ONLY in explicit desktop mode.
     let run_mode = penguin_daemon::hub::run_mode_from(
         std::env::var(penguin_daemon::hub::RUN_MODE_ENV)
             .ok()
             .as_deref(),
     );
     let keychain: Option<Arc<dyn penguin_sdk::SecretStore>> = match run_mode {
-        penguin_hub_client::RunMode::Daemonset => None,
-        penguin_hub_client::RunMode::Desktop | penguin_hub_client::RunMode::Server => {
-            match SecretsStore::open(SecretsConfig {
-                service_name: String::new(),
-                backend: SecretsBackend::PlatformOnly,
-            }) {
-                Ok(s) => Some(Arc::new(s.namespaced("hub-client"))),
-                Err(e) => {
-                    tracing::warn!(error = %e, "OS keychain unavailable for hub tokens");
-                    None
-                }
+        penguin_hub_client::RunMode::Desktop => match SecretsStore::open(SecretsConfig {
+            service_name: String::new(),
+            backend: SecretsBackend::PlatformOnly,
+        }) {
+            Ok(s) => Some(Arc::new(s.namespaced("hub-client"))),
+            Err(e) => {
+                tracing::warn!(error = %e, "OS keychain unavailable for hub tokens");
+                None
             }
-        }
+        },
+        penguin_hub_client::RunMode::Daemonset | penguin_hub_client::RunMode::Server => None,
     };
     let token_file = penguin_daemon::hub::token_file_from_env();
     let hub_tokens = penguin_daemon::hub::hub_token_store(

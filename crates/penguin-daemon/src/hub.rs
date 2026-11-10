@@ -271,8 +271,8 @@ pub fn build_client(
 /// Env var selecting the run mode (`desktop` / `daemonset` / `server`).
 pub const RUN_MODE_ENV: &str = "PENGUIND_RUN_MODE";
 
-/// Parses [`RUN_MODE_ENV`]; unset defaults to `server`, an unknown value is
-/// logged and also treated as `server`.
+/// Parses [`RUN_MODE_ENV`]; unset defaults to `server` (encrypted file only,
+/// the pre-existing behaviour), an unknown value is logged and also `server`.
 pub fn run_mode_from(value: Option<&str>) -> RunMode {
     match value.filter(|v| !v.trim().is_empty()) {
         None => RunMode::Server,
@@ -744,7 +744,10 @@ mod tests {
         let kc = || Some(Arc::new(NoSecrets) as Arc<dyn SecretStore>);
         let k = |m, kc, f: Option<&Path>| hub_token_store(m, kc, f, enc()).kind();
         assert_eq!(k(RunMode::Desktop, kc(), None), TokenStoreKind::Keychain);
-        assert_eq!(k(RunMode::Server, kc(), None), TokenStoreKind::Keychain);
+        assert_eq!(
+            k(RunMode::Server, kc(), None),
+            TokenStoreKind::EncryptedFile
+        );
         assert_eq!(
             k(RunMode::Daemonset, kc(), Some(&file)),
             TokenStoreKind::KubernetesSecret

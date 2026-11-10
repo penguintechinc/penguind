@@ -29,9 +29,9 @@ agent: POST /api/v1/agent/token   (refresh_token)       → new pair; old refres
 |---|---|---|
 | `desktop` | OS keychain (`keyring`) | |
 | `daemonset` | Kubernetes Secret, read from `PENGUIND_HUB_TOKEN_FILE` (projected volume, `defaultMode: 0400`) | Rotated tokens written back via the K8s API only when the pod SA may update the Secret; otherwise kept in memory and the agent re-bootstraps after restart. Never written to a file outside the mount; group/world-readable mount refused |
-| `server` (default) | OS keychain | |
+| `server` / unset (default) | Encrypted file | System service, no session keyring; unchanged pre-existing behaviour, not a fallback |
 
-**Exception — encrypted-file fallback (any mode):** used only when the preferred store is unavailable. Logs a WARN and sets `penguind_hub_token_store_active{store="encrypted-file"}=1` (gauge carries the active store for every mode).
+**Exception — encrypted-file fallback (desktop/daemonset):** used only when the preferred store is unavailable (WARN logged). Existing encrypted-file credentials are migrated into the preferred store and the file copy deleted (kept only if the store is read-only). Revocation/clear wipes every candidate store (keychain, Secret where writable, encrypted file). Gauge `penguind_hub_token_store_active{store}` = 1 for the active store in every mode.
 
 ## Poll Loop
 

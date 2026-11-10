@@ -239,40 +239,126 @@ pub struct SelectedTokenStore {
     pub fell_back: bool,
 }
 
-/// Picks the token store for `mode`; WARNs when falling back.
-pub fn select_token_store(mode: RunMode, c: TokenStoreCandidates) -> SelectedTokenStore {
-    let preferred: Option<Arc<dyn TokenStore>> = match mode {
-        RunMode::Desktop | RunMode::Server => c
-            .keychain
-            .map(|k| Arc::new(SecretTokenStore::new(k, TokenStoreKind::Keychain)) as _),
-        RunMode::Daemonset => c.k8s_secret.map(|k| Arc::new(k) as _),
-    };
-    match preferred {
-        Some(store) => {
-            tracing::info!(
-                store = store.kind().label(),
-                ?mode,
-                "hub token store selected"
-            );
-            SelectedTokenStore {
-                store,
-                fell_back: false,
-            }
-        }
-        None => {
+/// The active store plus every other candidate. Loads migrate legacy
+/// encrypted-file credentials into a preferred store (then delete the file
+/// copy); clears wipe every candidate, not just the active one.
+pub struct CompositeTokenStore {
+    active: Arc<dyn TokenStore>,
+    /// The encrypted-file store when it is NOT the active one (migration source).
+    legacy: Option<Arc<dyn TokenStore>>,
+    /// Every non-active candidate, wiped on clear.
+    others: Vec<Arc<dyn TokenStore>>,
+}
+
+impl CompositeTokenStore {
+    /// Moves encrypted-file credentials into the active store, then deletes
+    /// the file copy. If the active store cannot accept them (e.g. read-only
+    /// Secret), the file copy is kept as the only copy and returned.
+    async fn migrate(&self, legacy: &Arc<dyn TokenStore>) -> Result<Option<Credentials>, HubError> {
+        let Some(old) = legacy.load().await? else {
+            return Ok(None);
+        };
+        if let Err(e) = self.active.save(&old).await {
             tracing::warn!(
-                ?mode,
-                store = TokenStoreKind::EncryptedFile.label(),
-                "preferred hub token store unavailable; using encrypted-file fallback"
+                error = %e,
+                store = self.active.kind().label(),
+                "could not migrate encrypted-file hub credentials; keeping file copy"
             );
-            SelectedTokenStore {
-                store: Arc::new(SecretTokenStore::new(
-                    c.encrypted_file,
-                    TokenStoreKind::EncryptedFile,
-                )),
-                fell_back: true,
+            return Ok(Some(old));
+        }
+        legacy.clear().await?;
+        tracing::info!(
+            store = self.active.kind().label(),
+            "migrated hub credentials out of the encrypted file"
+        );
+        Ok(Some(old))
+    }
+}
+
+#[async_trait]
+impl TokenStore for CompositeTokenStore {
+    fn kind(&self) -> TokenStoreKind {
+        self.active.kind()
+    }
+
+    /// Active store first; a stale encrypted-file copy is deleted when the
+    /// active store already holds credentials, migrated otherwise.
+    async fn load(&self) -> Result<Option<Credentials>, HubError> {
+        let current = self.active.load().await?;
+        let Some(legacy) = &self.legacy else {
+            return Ok(current);
+        };
+        match current {
+            Some(c) => {
+                legacy.clear().await?;
+                Ok(Some(c))
+            }
+            None => self.migrate(legacy).await,
+        }
+    }
+
+    async fn save(&self, creds: &Credentials) -> Result<(), HubError> {
+        self.active.save(creds).await
+    }
+
+    /// Wipes the active store and every other candidate; every store is
+    /// attempted, the first error is returned.
+    async fn clear(&self) -> Result<(), HubError> {
+        let mut first: Option<HubError> = None;
+        for s in std::iter::once(&self.active).chain(self.others.iter()) {
+            if let Err(e) = s.clear().await {
+                tracing::warn!(error = %e, store = s.kind().label(), "could not wipe hub credentials");
+                first.get_or_insert(e);
             }
         }
+        first.map_or(Ok(()), Err)
+    }
+}
+
+/// Picks the token store for `mode`: desktop → keychain, daemonset → K8s
+/// Secret, server → encrypted file. WARNs when a preferred store is missing.
+pub fn select_token_store(mode: RunMode, c: TokenStoreCandidates) -> SelectedTokenStore {
+    let keychain: Option<Arc<dyn TokenStore>> = c
+        .keychain
+        .map(|k| Arc::new(SecretTokenStore::new(k, TokenStoreKind::Keychain)) as _);
+    let k8s: Option<Arc<dyn TokenStore>> = c.k8s_secret.map(|k| Arc::new(k) as _);
+    let file: Arc<dyn TokenStore> = Arc::new(SecretTokenStore::new(
+        c.encrypted_file,
+        TokenStoreKind::EncryptedFile,
+    ));
+    let preferred = match mode {
+        RunMode::Desktop => keychain.clone(),
+        RunMode::Daemonset => k8s.clone(),
+        RunMode::Server => None,
+    };
+    let fell_back = preferred.is_none() && mode != RunMode::Server;
+    let active = preferred.unwrap_or_else(|| file.clone());
+    if fell_back {
+        tracing::warn!(
+            ?mode,
+            store = TokenStoreKind::EncryptedFile.label(),
+            "preferred hub token store unavailable; using encrypted-file fallback"
+        );
+    } else {
+        tracing::info!(
+            store = active.kind().label(),
+            ?mode,
+            "hub token store selected"
+        );
+    }
+    let is_file = active.kind() == TokenStoreKind::EncryptedFile;
+    let others: Vec<Arc<dyn TokenStore>> = [keychain, k8s, Some(file.clone())]
+        .into_iter()
+        .flatten()
+        .filter(|s| s.kind() != active.kind())
+        .collect();
+    SelectedTokenStore {
+        store: Arc::new(CompositeTokenStore {
+            active,
+            legacy: (!is_file).then_some(file),
+            others,
+        }),
+        fell_back,
     }
 }
 
@@ -392,12 +478,13 @@ mod tests {
     }
 
     #[test]
-    fn desktop_and_server_prefer_keychain() {
-        for mode in [RunMode::Desktop, RunMode::Server] {
-            let s = select_token_store(mode, cands(true, None));
-            assert_eq!(s.store.kind(), TokenStoreKind::Keychain);
-            assert!(!s.fell_back);
-        }
+    fn desktop_prefers_keychain_server_uses_file() {
+        let s = select_token_store(RunMode::Desktop, cands(true, None));
+        assert_eq!(s.store.kind(), TokenStoreKind::Keychain);
+        assert!(!s.fell_back);
+        let s = select_token_store(RunMode::Server, cands(true, None));
+        assert_eq!(s.store.kind(), TokenStoreKind::EncryptedFile);
+        assert!(!s.fell_back, "server is file by design, not a fallback");
     }
 
     #[test]
@@ -410,7 +497,7 @@ mod tests {
 
     #[test]
     fn every_mode_falls_back_to_encrypted_file() {
-        for mode in [RunMode::Desktop, RunMode::Server, RunMode::Daemonset] {
+        for mode in [RunMode::Desktop, RunMode::Daemonset] {
             let s = select_token_store(mode, cands(false, None));
             assert_eq!(s.store.kind(), TokenStoreKind::EncryptedFile);
             assert!(s.fell_back);
@@ -478,5 +565,140 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         assert!(K8sSecretTokenStore::open(&dir.path().join("nope"), None).is_none());
         assert!(K8sSecretTokenStore::open(dir.path(), None).is_none());
+    }
+
+    fn shared() -> (Arc<Mem>, Arc<Mem>) {
+        (Arc::new(Mem::default()), Arc::new(Mem::default()))
+    }
+
+    async fn put(m: &Arc<Mem>, c: &Credentials) {
+        SecretTokenStore::new(m.clone(), TokenStoreKind::EncryptedFile)
+            .save(c)
+            .await
+            .expect("seed");
+    }
+
+    fn empty(m: &Arc<Mem>) -> bool {
+        m.0.lock().expect("lock").is_empty()
+    }
+
+    #[tokio::test]
+    async fn file_credentials_migrate_into_keychain_and_file_copy_is_deleted() {
+        let (kc, file) = shared();
+        put(&file, &creds()).await;
+        let s = select_token_store(
+            RunMode::Desktop,
+            TokenStoreCandidates {
+                keychain: Some(kc.clone()),
+                k8s_secret: None,
+                encrypted_file: file.clone(),
+            },
+        );
+        assert_eq!(s.store.load().await.expect("load"), Some(creds()));
+        assert!(empty(&file), "file copy deleted after migration");
+        assert!(!empty(&kc), "moved into keychain");
+        assert_eq!(s.store.load().await.expect("again"), Some(creds()));
+    }
+
+    #[tokio::test]
+    async fn stale_file_copy_is_deleted_when_keychain_already_has_creds() {
+        let (kc, file) = shared();
+        put(&kc, &creds()).await;
+        let mut stale = creds();
+        stale.refresh_token = "old".into();
+        put(&file, &stale).await;
+        let s = select_token_store(
+            RunMode::Desktop,
+            TokenStoreCandidates {
+                keychain: Some(kc.clone()),
+                k8s_secret: None,
+                encrypted_file: file.clone(),
+            },
+        );
+        assert_eq!(s.store.load().await.expect("load"), Some(creds()));
+        assert!(empty(&file));
+    }
+
+    #[tokio::test]
+    async fn migration_into_read_only_secret_keeps_file_copy() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let file = Arc::new(Mem::default());
+        put(&file, &creds()).await;
+        let s = select_token_store(
+            RunMode::Daemonset,
+            TokenStoreCandidates {
+                keychain: None,
+                k8s_secret: Some(k8s_store(dir.path())),
+                encrypted_file: file.clone(),
+            },
+        );
+        assert_eq!(s.store.load().await.expect("load"), Some(creds()));
+        assert!(!empty(&file), "only copy kept when the Secret is read-only");
+    }
+
+    #[tokio::test]
+    async fn migration_into_writable_secret_deletes_file_copy() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let p = secret_file(dir.path(), b"", 0o400);
+        let w = Arc::new(Writer::default());
+        let file = Arc::new(Mem::default());
+        put(&file, &creds()).await;
+        let s = select_token_store(
+            RunMode::Daemonset,
+            TokenStoreCandidates {
+                keychain: None,
+                k8s_secret: K8sSecretTokenStore::open(&p, Some(w.clone())),
+                encrypted_file: file.clone(),
+            },
+        );
+        assert_eq!(s.store.load().await.expect("load"), Some(creds()));
+        assert!(empty(&file));
+        assert!(w.0.lock().expect("lock").is_some());
+    }
+
+    #[tokio::test]
+    async fn clear_wipes_every_candidate_store() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let p = secret_file(dir.path(), b"", 0o400);
+        let w = Arc::new(Writer::default());
+        *w.0.lock().expect("lock") = Some(b"x".to_vec());
+        for mode in [RunMode::Desktop, RunMode::Daemonset, RunMode::Server] {
+            let (kc, file) = shared();
+            put(&kc, &creds()).await;
+            put(&file, &creds()).await;
+            *w.0.lock().expect("lock") = Some(b"x".to_vec());
+            let s = select_token_store(
+                mode,
+                TokenStoreCandidates {
+                    keychain: Some(kc.clone()),
+                    k8s_secret: K8sSecretTokenStore::open(&p, Some(w.clone())),
+                    encrypted_file: file.clone(),
+                },
+            );
+            s.store.clear().await.expect("clear");
+            assert!(empty(&kc), "{mode:?} keychain wiped");
+            assert!(empty(&file), "{mode:?} file wiped");
+            assert!(w.0.lock().expect("lock").is_none(), "{mode:?} secret wiped");
+        }
+    }
+
+    #[tokio::test]
+    async fn clear_attempts_all_and_reports_first_error() {
+        let file = Arc::new(Mem::default());
+        put(&file, &creds()).await;
+        let s = select_token_store(
+            RunMode::Desktop,
+            TokenStoreCandidates {
+                keychain: Some(Arc::new(Broken)),
+                k8s_secret: None,
+                encrypted_file: file.clone(),
+            },
+        );
+        assert!(s.store.clear().await.is_err());
+        assert!(empty(&file), "file still wiped despite keychain error");
+        assert!(
+            s.store.load().await.is_err(),
+            "broken active store surfaces"
+        );
     }
 }
