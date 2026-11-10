@@ -18,7 +18,7 @@ from app.config import Settings
 from app.factory import create_app
 from app.flags import ALL_FLAGS, StaticFlagGate
 from app.telemetry import Telemetry
-from tests.api.helpers import AGENT_SECRET, SPIFFE
+from tests.api.helpers import AGENT_SECRET
 
 BUCKET = "hub-test"
 ADMIN_SCOPES = (
@@ -88,7 +88,7 @@ def settings() -> Settings:
         s3_region="us-east-1",
         trusted_pubkeys=(),
         trust_forwarded_cert=False,
-        spiffe_prefix=SPIFFE,
+        trusted_proxy_cidrs=(),
         posthog_api_key=None,
         posthog_host=None,
         max_upload_bytes=1024 * 1024,

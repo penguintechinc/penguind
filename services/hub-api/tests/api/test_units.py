@@ -29,12 +29,11 @@ from app.models.policy import (
     merge_groups,
     resolve,
 )
-from app.mtls import mtls_agent_id, strip_untrusted_identity
 from app.problems import ApiError
 from app.ratelimit import RateLimiter
 from app.signing import MinisignKey, SignatureInvalidError, module_message, verify_module_signature
 from app.telemetry import Telemetry, install_log_forwarder
-from tests.api.helpers import AGENT_SECRET, SPIFFE
+from tests.api.helpers import AGENT_SECRET
 
 
 def test_parse_scopes_accepts_string_list_and_none() -> None:
@@ -97,33 +96,6 @@ async def test_oidc_verifier_reports_unreachable_issuer_as_invalid() -> None:
     verifier = OidcVerifier("https://127.0.0.1:9", "hub-api")
     with pytest.raises(TokenInvalidError):
         await verifier.verify("a.b.c")
-
-
-def test_mtls_identity_trust_and_parsing() -> None:
-    """XFCC is ignored when untrusted; when trusted, the SPIFFE URI SAN yields the agent id."""
-    settings = _settings(trust=False)
-    pid = uuid.uuid4()
-    headers = {"X-Forwarded-Client-Cert": f"Hash=1;URI={SPIFFE}{pid}"}
-    assert mtls_agent_id(headers, settings) is None
-    trusted = _settings(trust=True)
-    assert mtls_agent_id(headers, trusted) == pid
-    assert mtls_agent_id({"X-Forwarded-Client-Cert": "URI=spiffe://other/x"}, trusted) is None
-    assert mtls_agent_id({"X-Forwarded-Client-Cert": f"URI={SPIFFE}not-a-uuid"}, trusted) is None
-    assert mtls_agent_id({}, trusted) is None
-    quoted = {"X-Forwarded-Client-Cert": f'By=a,URI="{SPIFFE}{pid}"'}
-    assert mtls_agent_id(quoted, trusted) == pid
-
-
-def test_strip_untrusted_identity_removes_header_case_insensitively() -> None:
-    """Untrusted deployments lose the forwarded-cert header before any handler sees it."""
-    from werkzeug.datastructures import Headers
-
-    headers = Headers([("x-forwarded-client-cert", "URI=x"), ("Accept", "*/*")])
-    strip_untrusted_identity(headers, _settings(trust=False))
-    assert "x-forwarded-client-cert" not in [k.lower() for k in headers.keys()]
-    kept = Headers([("X-Forwarded-Client-Cert", "URI=x")])
-    strip_untrusted_identity(kept, _settings(trust=True))
-    assert "X-Forwarded-Client-Cert" in kept
 
 
 def test_cursor_round_trip_and_rejects_garbage() -> None:
@@ -346,7 +318,7 @@ def _settings(*, trust: bool) -> Settings:
         s3_region=None,
         trusted_pubkeys=(),
         trust_forwarded_cert=trust,
-        spiffe_prefix=SPIFFE,
+        trusted_proxy_cidrs=(),
         posthog_api_key=None,
         posthog_host=None,
         max_upload_bytes=1024,

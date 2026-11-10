@@ -171,25 +171,3 @@ async def test_forwarded_cert_ignored_unless_trusted(
     pid = (await created.get_json())["data"]["id"]
     spoof = {"X-Forwarded-Client-Cert": f"By=x;URI={SPIFFE}{pid}"}
     assert (await client.get("/api/v1/agent/sync", headers=spoof)).status_code == 401
-
-
-async def test_forwarded_cert_authenticates_when_trusted(
-    client: QuartClient, admin_headers: Callable[..., dict[str, str]], tenant: int, app: Quart
-) -> None:
-    """With the trust flag on, a SPIFFE URI SAN from the ingress identifies the agent (no JWT)."""
-    settings = app.config["HUB"].settings
-    object.__setattr__(settings, "trust_forwarded_cert", True)
-    try:
-        admin = admin_headers(tenant)
-        created = await client.post(
-            "/api/v1/agents",
-            json={"spiffe_id": SPIFFE + str(uuid.uuid4()), "platform": 1, "agent_version": "0.1.0"},
-            headers=admin,
-        )
-        pid = (await created.get_json())["data"]["id"]
-        xfcc = {"X-Forwarded-Client-Cert": f"Hash=ab;URI={SPIFFE}{pid}"}
-        resp = await client.get("/api/v1/agent/sync", headers=xfcc)
-        assert resp.status_code == 200
-        assert (await resp.get_json())["data"]["agent_id"] == pid
-    finally:
-        object.__setattr__(settings, "trust_forwarded_cert", False)

@@ -24,7 +24,7 @@ from app.config import Settings
 from app.context import HubContext
 from app.envelope import meta
 from app.flags import ALL_FLAGS, FlagGate, build_flag_gate
-from app.mtls import strip_untrusted_identity
+from app.mtls import take_forwarded_identity
 from app.problems import ApiError, Code
 from app.ratelimit import RateLimiter
 from app.telemetry import Telemetry, install_log_forwarder
@@ -92,7 +92,9 @@ def _register_hooks(app: Quart, ctx: HubContext) -> None:
     @app.before_request
     async def start_request() -> None:
         """Strip untrusted identity headers, open the request span, stamp timing."""
-        strip_untrusted_identity(request.headers, ctx.settings)
+        g.forwarded_spiffe = take_forwarded_identity(
+            request.headers, ctx.settings, request.remote_addr
+        )
         g.started = time.perf_counter()
         span = tracer.start_span(f"{request.method} {request.path}")
         g.span = span

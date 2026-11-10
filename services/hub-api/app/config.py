@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from ipaddress import IPv4Network, IPv6Network, ip_network
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _MIN_SECRET_LEN = 32
@@ -22,6 +23,11 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUE
 
 
+def _cidrs(raw: str) -> tuple[IPv4Network | IPv6Network, ...]:
+    """Parse a comma-separated CIDR list; empty input means no trusted proxies."""
+    return tuple(ip_network(part.strip(), strict=False) for part in raw.split(",") if part.strip())
+
+
 @dataclass(slots=True, frozen=True)
 class Settings:
     """Immutable runtime configuration built once per process."""
@@ -36,7 +42,7 @@ class Settings:
     s3_region: str | None
     trusted_pubkeys: tuple[str, ...]
     trust_forwarded_cert: bool
-    spiffe_prefix: str
+    trusted_proxy_cidrs: tuple[IPv4Network | IPv6Network, ...]
     posthog_api_key: str | None
     posthog_host: str | None
     max_upload_bytes: int
@@ -62,9 +68,7 @@ class Settings:
             s3_region=os.environ.get("HUB_S3_REGION") or None,
             trusted_pubkeys=keys,
             trust_forwarded_cert=_flag("HUB_TRUST_FORWARDED_CERT"),
-            spiffe_prefix=os.environ.get(
-                "HUB_SPIFFE_PREFIX", "spiffe://penguintech.io/dev/penguind/"
-            ),
+            trusted_proxy_cidrs=_cidrs(os.environ.get("HUB_TRUSTED_PROXY_CIDRS", "")),
             posthog_api_key=os.environ.get("POSTHOG_API_KEY") or None,
             posthog_host=os.environ.get("POSTHOG_HOST") or None,
             max_upload_bytes=int(os.environ.get("HUB_MAX_UPLOAD_BYTES", str(64 * 1024 * 1024))),

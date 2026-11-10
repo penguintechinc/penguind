@@ -25,8 +25,7 @@ from app.auth import (
 )
 from app.context import hub
 from app.models import AgentStatus, TenantDB
-from app.models.identity import resolve_agent_tenant
-from app.mtls import mtls_agent_id
+from app.models.identity import resolve_agent_by_spiffe, resolve_agent_tenant
 from app.problems import forbidden, gone, not_found, rate_limited, unauthorized
 
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
@@ -136,11 +135,28 @@ def require_admin(scope: str) -> Callable[[F], F]:
     return deco
 
 
-async def _agent_identity() -> tuple[uuid.UUID, int | None, frozenset[str]]:
-    """Return (agent public id, JWT tenant or None for mTLS, scopes) from mTLS or the JWT."""
-    spiffe_agent = mtls_agent_id(request.headers, hub().settings)
-    if spiffe_agent is not None:
-        return spiffe_agent, None, AGENT_SCOPES
+async def _mtls_identity(spiffe_uri: str) -> tuple[uuid.UUID, int]:
+    """Resolve a trusted SPIFFE URI to its registered agent; never read an id from the path.
+
+    The URI must match a registered ``spiffe_id`` exactly; agent id and tenant come from that row.
+    """
+    ctx = hub()
+    row = await asyncio.to_thread(resolve_agent_by_spiffe, ctx.db, spiffe_uri)
+    if row is None:
+        ctx.telemetry.instruments.auth_failures.add(1, {"plane": "agent", "reason": "unregistered"})
+        raise unauthorized("unregistered agent identity")
+    return uuid.UUID(str(row.public_id)), int(row.tenant_id)
+
+
+async def _agent_identity() -> tuple[uuid.UUID | None, int | None, frozenset[str], int | None]:
+    """Return (path-free agent id, JWT-claimed tenant, scopes, mTLS row tenant).
+
+    Exactly one identity source is used: a trusted SPIFFE URI (mTLS) wins over a bearer JWT.
+    """
+    spiffe_uri = g.get("forwarded_spiffe")
+    if spiffe_uri is not None:
+        pid, row_tenant = await _mtls_identity(spiffe_uri)
+        return pid, None, AGENT_SCOPES, row_tenant
     token = bearer_token()
     if token is None:
         raise unauthorized()
@@ -149,14 +165,18 @@ async def _agent_identity() -> tuple[uuid.UUID, int | None, frozenset[str]]:
     except TokenInvalidError as exc:
         hub().telemetry.instruments.auth_failures.add(1, {"plane": "agent"})
         raise unauthorized(str(exc)) from exc
-    return claims.agent_public_id, claims.tenant, claims.scopes
+    return claims.agent_public_id, claims.tenant, claims.scopes, None
 
 
 async def authenticate_agent(scope: str) -> AgentPrincipal:
     """Resolve the calling agent, check tenant match, revocation and ``scope``."""
     ctx = hub()
-    agent_pid, jwt_tenant, scopes = await _agent_identity()
-    owner = await asyncio.to_thread(resolve_agent_tenant, ctx.db, agent_pid)
+    agent_pid, jwt_tenant, scopes, row_tenant = await _agent_identity()
+    if agent_pid is None:
+        raise unauthorized("unknown agent")
+    owner = row_tenant
+    if owner is None:
+        owner = await asyncio.to_thread(resolve_agent_tenant, ctx.db, agent_pid)
     if owner is None:
         raise unauthorized("unknown agent")
     if jwt_tenant is not None and jwt_tenant != owner:

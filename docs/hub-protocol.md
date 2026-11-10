@@ -16,9 +16,10 @@ agent: POST /api/v1/agent/token   (refresh_token)       → new pair; old refres
 
 | Mechanism | When | Notes |
 |---|---|---|
-| SPIFFE mTLS (X.509-SVID) | SPIRE deployed | `spiffe://penguintech.io/<env>/penguind/<agent_id>`; preferred |
+| SPIFFE mTLS (X.509-SVID) | SPIRE deployed; XFCC from a trusted ingress only | `spiffe://penguintech.io/<env>/penguind/<agent_id>`; preferred |
 | Machine JWT (bearer) | no SPIRE | `sub`=agent_id, `tenant`, scopes `hub:agent:sync`, `hub:agent:report` |
 
+- mTLS trust: the ingress must overwrite XFCC (Envoy `forward_client_cert_details: SANITIZE_SET`). The hub accepts one element with one `spiffe://` URI, only from a peer in `HUB_TRUSTED_PROXY_CIDRS` with `HUB_TRUST_FORWARDED_CERT=1`, and only when the URI exactly matches a registered agent (`POST /api/v1/agents`). Agent ids are never taken from paths.
 - Bootstrap token: single use, TTL ≤7d, consumed atomically; reuse → 401
 - Refresh reuse → whole chain revoked (compromise signal); agent must re-enroll
 - Tokens in OS keychain/secret store only, never plaintext files

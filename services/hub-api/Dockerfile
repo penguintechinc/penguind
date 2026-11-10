@@ -2,6 +2,11 @@
 # hub-api: Quart service served by hypercorn. Rootless (uid 10001), stateless,
 # compatible with readOnlyRootFilesystem (writable paths are mounted emptyDirs at runtime).
 # Build context: services/hub-api/ (needs requirements.txt with hashes, and app/ package).
+# Runtime env contract (set via chart ConfigMap/Secrets, never baked in):
+#   HUB_DATABASE_DSN, BASE_URL, OIDC_ISSUER_URL, OIDC_AUDIENCE, HUB_AGENT_JWT_SECRET (secret),
+#   HUB_S3_BUCKET, HUB_S3_ENDPOINT, HUB_S3_REGION, AWS_* (secret), HUB_TRUSTED_PUBKEYS,
+#   HUB_TRUST_FORWARDED_CERT (0|1), HUB_TRUSTED_PROXY_CIDRS (comma list), POSTHOG_API_KEY,
+#   OTEL_* (OTLP endpoint/protocol/service name).
 
 FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS builder
 ENV PIP_NO_CACHE_DIR=1 \
