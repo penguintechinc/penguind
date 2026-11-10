@@ -19,6 +19,12 @@ ignore = [
     "RUSTSEC-2024-0370",
     "RUSTSEC-2024-0384",
     "RUSTSEC-2024-0436",
+    # zbus-stack (zbus 5.x -> zvariant/zvariant_derive/zbus_names) flagged unmaintained 2026;
+    # pulled in via ksni (tray), keyring/secret-service and squawk. No patched release exists;
+    # upstream-blocked. Not an exploitable vuln. Revisit when zbus migrates off these crates.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
 
 [licenses]

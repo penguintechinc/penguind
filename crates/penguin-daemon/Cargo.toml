@@ -21,6 +21,9 @@ penguin-telemetry.workspace = true
 # sha256, minisign) and the go-plugin host that launches a verified binary.
 # `external.rs` resolves a module name the builtin registry doesn't
 # recognise through these two.
+# wasmtime host: backs `HostServices::call_tool` and the wasm module runner,
+# both gated by the `penguind.wasm-modules` flag.
+penguin-wasm-host.workspace = true
 penguin-extplugin.workspace = true
 penguin-goplugin-host.workspace = true
 # waddlebot module: needed for the session proxy registry access in the daemon service.
@@ -62,3 +65,5 @@ sha2 = "=0.11.0"
 penguin-module-squawk.workspace = true
 penguin-module-tobogganing.workspace = true
 prometheus.workspace = true
+# WAT -> wasm fixtures for the wasm module runner tests (`src/wasm.rs`).
+wat.workspace = true
