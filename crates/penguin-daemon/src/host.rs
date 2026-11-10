@@ -19,6 +19,7 @@ use std::sync::{Arc, OnceLock};
 use penguin_sdk::tools::{ToolError, ToolFuture};
 use penguin_sdk::{EventSink, HostServices, LicenseChecker, Logger, Metrics, SecretStore};
 use penguin_telemetry::Telemetry;
+use penguin_wasm_host::executors::ModuleGauges;
 use penguin_wasm_host::tools::ToolMetrics;
 use penguin_wasm_host::{
     ModuleToolContext, ToolRegistry, WASM_MODULES_FLAG, build_module_registry,
@@ -59,7 +60,7 @@ pub struct DaemonHost {
 /// many modules that never call a tool.
 struct ToolWiring {
     module: String,
-    telemetry: Arc<Telemetry>,
+    gauges: ModuleGauges,
     metrics: Option<ToolMetrics>,
     registry: OnceLock<Result<Arc<ToolRegistry>, String>>,
 }
@@ -72,7 +73,7 @@ impl ToolWiring {
             .get_or_init(|| {
                 build_tool_registry(
                     &self.module,
-                    &self.telemetry,
+                    &self.gauges,
                     logger.clone(),
                     config,
                     self.metrics.clone(),
@@ -86,7 +87,7 @@ impl ToolWiring {
 /// prometheus registry; used by both `call_tool` and the wasm module runner.
 pub(crate) fn build_tool_registry(
     module: &str,
-    telemetry: &Telemetry,
+    gauges: &ModuleGauges,
     logger: Arc<dyn Logger>,
     config: &[u8],
     metrics: Option<ToolMetrics>,
@@ -95,7 +96,7 @@ pub(crate) fn build_tool_registry(
         module,
         logger,
         config_yaml: config,
-        prometheus: telemetry.registry(),
+        gauges,
         doh_endpoint: None,
         metrics,
     })
@@ -201,6 +202,9 @@ pub struct DaemonHostFactory {
     events: Arc<dyn EventSink>,
     state_dir: PathBuf,
     tool_metrics: Option<ToolMetrics>,
+    /// Module gauge ledger shared by every run, so `metrics_publish` caps
+    /// hold per module rather than per run.
+    gauges: ModuleGauges,
 }
 
 impl DaemonHostFactory {
@@ -228,6 +232,7 @@ impl DaemonHostFactory {
         };
         DaemonHostFactory {
             tool_metrics,
+            gauges: ModuleGauges::new(telemetry.registry().clone()),
             telemetry,
             config_store: config,
             secrets,
@@ -246,7 +251,7 @@ impl DaemonHostFactory {
         let config = resolve_config(&self.config_store, module, None, logger.as_ref());
         build_tool_registry(
             module,
-            &self.telemetry,
+            &self.gauges,
             logger,
             &config,
             self.tool_metrics.clone(),
@@ -274,7 +279,7 @@ impl HostFactory for DaemonHostFactory {
             events: self.events.clone(),
             tools: ToolWiring {
                 module: module.to_string(),
-                telemetry: self.telemetry.clone(),
+                gauges: self.gauges.clone(),
                 metrics: self.tool_metrics.clone(),
                 registry: OnceLock::new(),
             },
@@ -711,10 +716,7 @@ mod tests {
             .await
             .expect("metric");
         let fams = telemetry.registry().gather();
-        assert!(
-            fams.iter()
-                .any(|f| f.name() == "penguind_module_tooly_requests")
-        );
+        assert!(fams.iter().any(|f| f.name() == "penguind_module_requests"));
         let calls = fams
             .iter()
             .find(|f| f.name() == "penguind_wasm_tool_calls_total")
@@ -758,7 +760,7 @@ mod tests {
         let (_c, _s, telemetry, _host) = tool_factory(true, None);
         let wiring = ToolWiring {
             module: "broken".into(),
-            telemetry,
+            gauges: ModuleGauges::new(telemetry.registry().clone()),
             metrics: None,
             registry: OnceLock::new(),
         };

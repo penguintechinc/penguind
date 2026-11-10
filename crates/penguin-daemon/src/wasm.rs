@@ -247,10 +247,7 @@ mod tests {
         assert_eq!(out.exit_code, 4); // "null"
         assert_eq!(out.calls.len(), 1);
         let fams = telemetry.registry().gather();
-        assert!(
-            fams.iter()
-                .any(|f| f.name() == "penguind_module_my_mod_hits")
-        );
+        assert!(fams.iter().any(|f| f.name() == "penguind_module_hits"));
         assert!(
             fams.iter()
                 .any(|f| f.name() == "penguind_wasm_tool_calls_total")

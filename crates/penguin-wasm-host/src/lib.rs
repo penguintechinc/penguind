@@ -19,5 +19,5 @@ pub mod tls;
 pub mod tools;
 
 pub use error::WasmHostError;
-pub use runtime::{ModuleLimits, RunOutcome, WASM_MODULES_FLAG, WasmRuntime};
+pub use runtime::{DnsAllowlist, ModuleLimits, RunOutcome, WASM_MODULES_FLAG, WasmRuntime};
 pub use tools::{ModuleToolContext, ToolRegistry, build_module_registry};
