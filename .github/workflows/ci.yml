@@ -8,24 +8,24 @@ on:
   push:
     branches: [main, "release/**"]
 
+# Container jobs default to `sh`; pin bash so `set -o pipefail` works everywhere.
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
-    container: rust:1.97-bookworm
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
+    container: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: protoc
-        # tonic-prost-build (penguin-proto) shells out to protoc at build time;
-        # the base rust image ships neither it nor the well-known types.
-        # libprotobuf-dev provides google/protobuf/*.proto, which the vendored
-        # go-plugin grpc_stdio.proto imports — protobuf-compiler alone is not
-        # enough and fails with a confusing "File not found" on that import.
-        # jq is bundled here too: make smoke-test's `cargo metadata | jq` needs
-        # it and rust:1.97-bookworm doesn't ship it either.
-        run: apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev jq
+      # protoc: pinned sha-verified release zip (no apt/sudo; rootless-safe).
+      # jq: `make smoke-test` pipes `cargo metadata | jq`.
+      - uses: ./.github/actions/setup-protoc
+      - uses: ./.github/actions/setup-jq
       - name: components
         run: rustup component add rustfmt clippy
       - name: fmt
@@ -42,31 +42,26 @@ jobs:
         run: make smoke-test
 
   telemetry-validation:
-    # Deliberately NOT `container: rust:1.97-bookworm` — this job needs a
-    # real Docker daemon to run the OTLP collector sink, which that
-    # container doesn't have. ubuntu-latest hosted runners do.
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
+    # No Docker daemon in ARC kubernetes mode: the OTLP sink runs as a
+    # pinned otelcol-contrib process inside the job container instead.
+    container: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Rust (matches rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: '1.97.0'
-      - name: protoc + jq
-        # Same packages the `rust` job's container installs via apt — see
-        # that job's `protoc` step for why each one is needed.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev jq
+      - uses: ./.github/actions/setup-protoc
+      - uses: ./.github/actions/setup-jq
+      - uses: ./.github/actions/setup-otelcol
       - name: Telemetry Validation gate (real OTLP collector, flag-on + flag-off)
         run: make test-telemetry
 
   supply-chain:
-    runs-on: ubuntu-latest
-    container: rust:1.97-bookworm
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
+    container: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: cargo-deny (licenses, bans, sources, advisories)
         run: |
-          cargo install cargo-deny --locked
+          cargo install cargo-deny --version 0.20.2 --locked
           cargo deny check
       - name: cargo-audit (RustSec advisories)
         run: |

@@ -32,6 +32,11 @@
 # Integrity: a count must be reported, "no errors" is not a pass). A sink
 # that fails to start is a FAIL with its logs attached, never a silent skip.
 #
+# Sink modes (VALIDATE_TELEMETRY_SINK_MODE): `managed` (default) runs the
+# collector via docker; `process` runs a local otelcol-contrib binary
+# (VALIDATE_TELEMETRY_OTELCOL_BIN) for runners with no Docker daemon (ARC
+# kubernetes mode); `external` reuses an already-running sink.
+#
 # Env var escape hatches (production code is never touched by these):
 #   VALIDATE_TELEMETRY_SINK_MODE=external
 #       Skip starting/stopping a sink container; reuse one already running.
@@ -86,8 +91,12 @@ mkdir -p "$OUT_DIR" "$STATE_DIR"
 chmod 777 "$OUT_DIR"
 
 DAEMON_PID=""
+SINK_PID=""
 
 cleanup() {
+    if [ -n "$SINK_PID" ]; then
+        kill -TERM "$SINK_PID" 2>/dev/null || true
+    fi
     if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
         kill -TERM "$DAEMON_PID" 2>/dev/null || true
         for _ in $(seq 1 20); do
@@ -121,8 +130,13 @@ done
 
 # ── stand up (or attach to) the OTLP sink ───────────────────────────────────
 
-if [ "$SINK_MODE" = "managed" ]; then
-    command -v docker >/dev/null 2>&1 || fail "docker is required to run the managed OTLP sink and is not available"
+if [ "$SINK_MODE" = "managed" ] || [ "$SINK_MODE" = "process" ]; then
+    if [ "$SINK_MODE" = "managed" ]; then
+        command -v docker >/dev/null 2>&1 || fail "docker is required to run the managed OTLP sink and is not available"
+        SINK_OUT_PATH="/output"
+    else
+        SINK_OUT_PATH="$OUT_DIR"
+    fi
 
     cat > "$WORK_DIR/collector-config.yaml" <<'EOF'
 receivers:
@@ -135,11 +149,11 @@ receivers:
 
 exporters:
   file/logs:
-    path: /output/logs.json
+    path: @OUT@/logs.json
   file/metrics:
-    path: /output/metrics.json
+    path: @OUT@/metrics.json
   file/traces:
-    path: /output/traces.json
+    path: @OUT@/traces.json
 
 service:
   pipelines:
@@ -153,7 +167,26 @@ service:
       receivers: [otlp]
       exporters: [file/traces]
 EOF
+    sed -i.bak "s#@OUT@#${SINK_OUT_PATH}#g" "$WORK_DIR/collector-config.yaml"
+    rm -f "$WORK_DIR/collector-config.yaml.bak"
 
+    if [ "$SINK_MODE" = "process" ]; then
+        : "${VALIDATE_TELEMETRY_OTELCOL_BIN:?process sink mode requires VALIDATE_TELEMETRY_OTELCOL_BIN}"
+        [ -x "$VALIDATE_TELEMETRY_OTELCOL_BIN" ] || fail "$VALIDATE_TELEMETRY_OTELCOL_BIN is not executable"
+        "$VALIDATE_TELEMETRY_OTELCOL_BIN" --config "$WORK_DIR/collector-config.yaml" >"$WORK_DIR/sink.log" 2>&1 &
+        SINK_PID=$!
+        ready=0
+        for _ in $(seq 1 30); do
+            if grep -q "Everything is ready" "$WORK_DIR/sink.log" 2>/dev/null; then ready=1; break; fi
+            kill -0 "$SINK_PID" 2>/dev/null || break
+            sleep 0.5
+        done
+        if [ "$ready" -ne 1 ]; then
+            cat "$WORK_DIR/sink.log" >&2
+            fail "OTLP sink process never became ready"
+        fi
+        SINK_GRPC_ENDPOINT="http://127.0.0.1:4317"
+    else
     docker rm -f "$SINK_CONTAINER" >/dev/null 2>&1 || true
     if ! docker run -d --name "$SINK_CONTAINER" \
         -p "${GRPC_PORT}:4317" -p "${HTTP_PORT}:4318" \
@@ -181,6 +214,7 @@ EOF
         fail "OTLP sink never became ready"
     fi
     SINK_GRPC_ENDPOINT="http://127.0.0.1:${GRPC_PORT}"
+    fi
 else
     : "${VALIDATE_TELEMETRY_SINK_GRPC_ENDPOINT:?external sink mode requires VALIDATE_TELEMETRY_SINK_GRPC_ENDPOINT}"
     : "${VALIDATE_TELEMETRY_SINK_OUTPUT_DIR:?external sink mode requires VALIDATE_TELEMETRY_SINK_OUTPUT_DIR}"

@@ -3,7 +3,7 @@
 # These exercise real boundaries the unit gate deliberately excludes — unix
 # sockets and the SO_PEERCRED matrix (M2), external plugin subprocesses (M3),
 # privileged :53/:123 binds and resolver surgery (M5), and network namespaces
-# for WireGuard (M6). The container is privileged for exactly that reason.
+# for WireGuard (M6). The container gets --cap-add NET_ADMIN for exactly that reason.
 #
 # Unlike the unit gate this tier is functional validation, not a second coverage
 # gate; combined coverage is reported informationally by `make
@@ -23,33 +23,42 @@ on:
   push:
     branches: [main, "release/**"]
 
+# Container jobs default to `sh`; pin bash so `set -o pipefail` works everywhere.
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
     container:
-      image: rust:1.97-bookworm
-      # Privileged: root-only tests self-skip when unprivileged, so without this
-      # the tier would silently pass by skipping everything that matters.
-      options: --privileged
+      image: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
+      # NET_ADMIN only: wg_tunnel needs it for netns/WireGuard; with
+      # PENGUIN_REQUIRE_NET_ADMIN=1 an unmet precondition fails, never skips.
+      options: --cap-add NET_ADMIN
     env:
       PENGUIN_INTEGRATION: "1"
+      PENGUIN_REQUIRE_NET_ADMIN: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: protoc
-        # protobuf-compiler alone is not enough: libprotobuf-dev supplies the
-        # well-known types (google/protobuf/empty.proto) that the vendored
-        # go-plugin grpc_stdio.proto imports. iproute2/wireguard-tools/
-        # iputils-ping are the M6 WireGuard netns gate's scaffolding — it
-        # drives the CONTROLLED PEER through `ip`/`wg` directly and never
-        # through the code under test (see wg_tunnel.rs's module doc).
-        # openresolv provides `resolvconf`: defguard_wireguard_rs's
-        # remove_interface() shells out to it unconditionally on teardown
-        # even when DNS was never configured — without it KernelBackend's
-        # teardown fails on every interface with ENOENT.
-        run: apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev iproute2 wireguard-tools iputils-ping openresolv
+      - uses: ./.github/actions/setup-protoc
+      - name: netns/WireGuard scaffolding packages
+        # iproute2/wireguard-tools/iputils-ping are the M6 WireGuard netns
+        # gate's scaffolding — it drives the CONTROLLED PEER through `ip`/`wg`
+        # directly (see wg_tunnel.rs's module doc). openresolv provides
+        # `resolvconf`: defguard_wireguard_rs's remove_interface() shells out
+        # to it unconditionally on teardown. These need apt, so require root
+        # (or passwordless sudo) and fail loudly otherwise — never skip.
+        run: |
+          set -euo pipefail
+          if [ "$(id -u)" -eq 0 ]; then SUDO=""
+          elif sudo -n true 2>/dev/null; then SUDO="sudo -n"
+          else echo "::error::apt needs root or passwordless sudo (uid=$(id -u))"; exit 1; fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends iproute2 wireguard-tools iputils-ping openresolv
       - name: integration tests
         # `penguin-module-tobogganing/integration-test` is required to even
         # compile wg_tunnel.rs (see that crate's Cargo.toml) — without it

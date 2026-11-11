@@ -1,0 +1,35 @@
+[package]
+name = "penguin-wasm-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+penguin-sdk.workspace = true
+wasmtime.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-norway.workspace = true
+jsonschema.workspace = true
+prometheus.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+minisign-verify = "=0.2.5"
+reqwest.workspace = true
+url.workspace = true
+# reqwest is built with `rustls-no-provider`: the aws-lc-rs provider must be
+# installed before any Client is built (same as penguin-licensing).
+rustls.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+wat.workspace = true

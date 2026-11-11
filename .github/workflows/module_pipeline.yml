@@ -1,0 +1,65 @@
+# WASM module pipeline: builds and tests the wasm tool-call host
+# (crates/penguin-wasm-host) and checks RustSec advisories. The wasm32-wasip1
+# target is installed so host/module builds that target WASI resolve. Actions
+# pinned to commit SHAs; no github.event.* is interpolated into any run: step.
+name: module-pipeline
+
+on:
+  pull_request:
+    paths:
+      - "crates/penguin-wasm-host/**"
+      - "crates/penguin-sdk/**"
+      - "modules/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/module_pipeline.yml"
+  push:
+    branches: [main, "release/**"]
+
+# Container jobs default to `sh`; pin bash so `set -o pipefail` works everywhere.
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  wasm-host:
+    runs-on: ${{ ((github.event_name == 'pull_request' && (github.base_ref == 'main' || github.event.pull_request.head.repo.full_name != github.repository)) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'release') && 'ubuntu-latest' || fromJSON('{"group":"dal2alpha","labels":["dal2-alpha-ci"]}') }}
+    container: rust:1.97-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (matches rust-toolchain.toml)
+        # Plain rustup: dtolnay's composite inputs arrive empty inside dal2alpha
+        # job containers. rust-toolchain.toml pins the channel + components.
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-wasip1
+          rustc --version
+
+      - name: protoc
+        # penguin-proto's build script needs protoc + well-known types (see ci.yml).
+        uses: ./.github/actions/setup-protoc
+
+      - name: Build penguin-wasm-host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p penguin-wasm-host --locked
+
+      - name: Test penguin-wasm-host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p penguin-wasm-host --locked
+
+      - name: cargo-deny advisories
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny check advisories

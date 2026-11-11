@@ -1,0 +1,29 @@
+name: Setup otelcol-contrib
+description: >-
+  Install a pinned, sha256-verified otelcol-contrib binary so the telemetry
+  gate can run its OTLP sink as a plain process (no Docker daemon needed —
+  ARC kubernetes-mode runners have none). Exports the binary path as
+  VALIDATE_TELEMETRY_OTELCOL_BIN and selects process sink mode.
+runs:
+  using: composite
+  steps:
+    - name: Install otelcol-contrib 0.144.0
+      shell: bash
+      run: |
+        set -euo pipefail
+        V=0.144.0
+        case "$(uname -m)" in
+          x86_64)  a=amd64; sha=4429eecfb311e35f846af453d46c0a8a72e6773489e8105fb049f5bc9edec022 ;;
+          aarch64) a=arm64; sha=3e966048d23aa5a37e40b8c557b721ddc763f6374552d45595dea343c04deadc ;;
+          *) echo "::error::unsupported arch $(uname -m)"; exit 1 ;;
+        esac
+        dest="${RUNNER_TEMP}/otelcol"
+        tgz="${RUNNER_TEMP}/otelcol-${V}.tar.gz"
+        curl -sSfL -o "$tgz" "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${V}/otelcol-contrib_${V}_linux_${a}.tar.gz"
+        echo "${sha}  ${tgz}" | sha256sum -c -
+        mkdir -p "$dest"
+        tar -xzf "$tgz" -C "$dest" otelcol-contrib
+        test -x "$dest/otelcol-contrib"
+        echo "VALIDATE_TELEMETRY_OTELCOL_BIN=$dest/otelcol-contrib" >> "$GITHUB_ENV"
+        echo "VALIDATE_TELEMETRY_SINK_MODE=process" >> "$GITHUB_ENV"
+        "$dest/otelcol-contrib" --version

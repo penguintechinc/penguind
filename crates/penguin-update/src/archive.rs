@@ -98,7 +98,11 @@ fn extract_from_zip(bytes: &[u8], binary_name: &str) -> Result<Vec<u8>, ArchiveE
             continue;
         }
 
-        let matches = basename_matches(file.name(), binary_name);
+        // zip 9: name() is fallible; an undecodable entry name cannot match the binary.
+        let matches = file
+            .name()
+            .map(|name| basename_matches(&name, binary_name))
+            .unwrap_or(false);
         if !matches {
             continue;
         }

@@ -110,31 +110,40 @@ macro_rules! require_integration {
     };
 }
 
-/// True if the effective UID is 0, read from `/proc/self/status` rather
-/// than pulling in a new dependency just for one integration test. A read
-/// failure is treated as "not root" — the safe default for a privilege
-/// check.
-fn running_as_root() -> bool {
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        return false;
-    };
-    for line in status.lines() {
-        let Some(fields) = line.strip_prefix("Uid:") else {
-            continue;
-        };
-        let Some(effective) = fields.split_whitespace().nth(1) else {
-            return false;
-        };
-        return effective == "0";
+/// True when the caller demands the M6 gate actually run: an unmet
+/// precondition then fails the test instead of self-skipping, so a
+/// mis-provisioned CI runner cannot pass by skipping.
+fn require_net_admin() -> bool {
+    require_net_admin_from(std::env::var("PENGUIN_REQUIRE_NET_ADMIN").ok().as_deref())
+}
+
+/// Pure decision for [`require_net_admin`]: only the exact value `"1"`
+/// enables it. Split out so the gate is unit-testable without mutating env.
+fn require_net_admin_from(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// Unit test of the `PENGUIN_REQUIRE_NET_ADMIN` gate; runs in the default
+/// (non-ignored) tier because it touches no network state.
+#[test]
+fn require_net_admin_env_gate() {
+    assert!(require_net_admin_from(Some("1")));
+    for v in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("true"),
+        Some("yes"),
+        Some(" 1"),
+    ] {
+        assert!(!require_net_admin_from(v), "{v:?} must not enable the gate");
     }
-    false
 }
 
 /// True if `CAP_NET_ADMIN` (bit 12) is set in this process's effective
 /// capability mask, per `/proc/self/status`'s `CapEff` hex field. Covers a
-/// non-root process granted the capability via file capabilities; a root
-/// process already implies this, so [`missing_precondition`] only needs
-/// this as a fallback.
+/// root or non-root process; a root process inside a container started with
+/// `--cap-drop` may lack it, so this is the only privilege check used.
 fn has_cap_net_admin() -> bool {
     const CAP_NET_ADMIN_BIT: u32 = 12;
     let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
@@ -157,8 +166,8 @@ fn has_cap_net_admin() -> bool {
 /// is met. Checked once, up front, so the test prints one clear reason and
 /// self-skips instead of failing deep inside setup.
 fn missing_precondition() -> Option<String> {
-    if !running_as_root() && !has_cap_net_admin() {
-        return Some("not running as root (or lacking CAP_NET_ADMIN)".to_string());
+    if !has_cap_net_admin() {
+        return Some("CAP_NET_ADMIN is not in the effective capability set (CapEff)".to_string());
     }
     if !Path::new("/sys/module/wireguard").exists() {
         return Some(
@@ -406,6 +415,9 @@ async fn kernel_backend_establishes_and_tears_down_real_tunnel() {
     require_integration!();
 
     if let Some(reason) = missing_precondition() {
+        if require_net_admin() {
+            panic!("PENGUIN_REQUIRE_NET_ADMIN=1 but wg_tunnel precondition unmet: {reason}");
+        }
         eprintln!("SKIP: wg_tunnel cannot run here: {reason}");
         return;
     }
