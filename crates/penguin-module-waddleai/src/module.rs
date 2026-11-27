@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -40,7 +40,7 @@ use penguin_sdk::{
 };
 
 use crate::cache::DenylistCache;
-use crate::client::{Config as ClientConfig, WaddleAiClient};
+use crate::client::{Config as ClientConfig, EvaluateRequest, TelemetryRequest, WaddleAiClient};
 use crate::commands;
 use crate::config::ModuleConfig;
 use crate::error::WaddleAiError;
@@ -89,17 +89,32 @@ struct AuthProbe {
 /// `crate::commands::hook_command` renders and turns into an exit code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookOutcome {
-    /// WaddleAI returned a live `"allow"` decision.
+    /// WaddleAI returned a live `"allow"` decision (or fire-and-forget
+    /// telemetry completed/degraded without blocking).
     Allow { reason: String },
     /// A denial — either WaddleAI's own live decision, or an offline
-    /// exact-match against the cached Tier-1 denylist (`source` records
+    /// glob match against the cached Tier-1 denylist (`source` records
     /// which).
     Deny {
         reason: String,
+        rule_id: Option<Value>,
         source: DecisionSource,
     },
+    /// WaddleAI requested interactive confirmation (`decision == "ask"`).
+    Ask {
+        reason: String,
+        rule_id: Option<Value>,
+    },
+    /// WaddleAI steered the call to another model or skill set
+    /// (`decision == "redirect"`).
+    Redirect {
+        reason: String,
+        rule_id: Option<Value>,
+        redirect_model: Option<String>,
+        active_skills: Option<Vec<String>>,
+    },
     /// No live decision could be obtained (WaddleAI unreachable or
-    /// rejected the request) and the subject did not match the cached
+    /// rejected the request) and the tool input did not match the cached
     /// denylist — this crate has no answer to give, so it says so rather
     /// than inventing one. `crate::commands::hook_command` maps this to a
     /// nonzero exit, matching each ecosystem's own hook contract of
@@ -377,7 +392,11 @@ impl WaddleAiModule {
             .lock()
             .expect("denylist mutex poisoned")
             .clone();
-        cache.record_sync(response.version, response.entries, SystemTime::now());
+        cache.record_sync(
+            response.updated_at,
+            response.denylist_patterns,
+            SystemTime::now(),
+        );
 
         if let Err(err) = crate::cache::save(self.denylist_path(), &cache) {
             self.host().logger().warn(
@@ -400,63 +419,155 @@ impl WaddleAiModule {
         Ok(cache)
     }
 
-    /// Evaluates one normalized hook event: forwards it to WaddleAI, and —
-    /// only if no live decision could be obtained — falls back to an
-    /// exact-match lookup against the cached Tier-1 denylist. See this
-    /// module's top-level doc for why that fallback is not policy logic.
-    ///
-    /// The cache lookup key is `payload["subject"]` (a string) when
-    /// present: the normalized event envelope's documented field for "the
-    /// one string WaddleAI's Tier-1 denylist matches against" (e.g. a full
-    /// shell command). A payload with no `subject` field simply can't be
-    /// checked offline — that is reported as [`HookOutcome::Unavailable`],
-    /// never silently treated as allowed.
+    /// Evaluates one normalized hook event:
+    /// - Telemetry-only events (`post_tool_use`, `session_start`,
+    ///   `notification`) are forwarded fire-and-forget to
+    ///   `POST /api/v1/hooks/telemetry` and never block the agent.
+    /// - `pre_tool_use` is forwarded to `POST /api/v1/hooks/evaluate`; if
+    ///   unreachable, falls back to glob-matching `tool_input` against the
+    ///   cached Tier-1 denylist (fail-closed).
     pub(crate) async fn evaluate_hook_event(
         &self,
         ecosystem: Ecosystem,
         event: &str,
         payload: &Value,
     ) -> HookOutcome {
+        let canonical_event = hooks::normalize_event(event).unwrap_or(event);
         self.metrics()
             .hook_invocations_total
-            .with_label_values(&[ecosystem.as_str(), event])
+            .with_label_values(&[ecosystem.as_str(), canonical_event])
             .inc();
 
+        let tool_name = payload
+            .get("tool_name")
+            .or_else(|| payload.get("tool"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(if hooks::is_telemetry_event(canonical_event) {
+                ""
+            } else {
+                "unknown"
+            })
+            .to_string();
+
+        let tool_input = match payload.get("tool_input") {
+            Some(v) if v.is_object() => v.clone(),
+            _ if payload.is_object() => payload.clone(),
+            _ => serde_json::json!({}),
+        };
+
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        let workspace_path = payload
+            .get("workspace_path")
+            .or_else(|| payload.get("cwd"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+
+        let occurred_at = payload
+            .get("occurred_at")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(now_rfc3339);
+
         let client = self.client();
-        match self
-            .call(client.evaluate_hook_event(ecosystem.as_str(), event, payload))
-            .await
-        {
-            Ok(response) if response.decision == "allow" => {
-                self.record_decision("allow");
-                HookOutcome::Allow {
-                    reason: response.reason,
-                }
+
+        if hooks::is_telemetry_event(canonical_event) {
+            let req = TelemetryRequest {
+                ecosystem: ecosystem.as_str().to_string(),
+                event: canonical_event.to_string(),
+                tool_name,
+                session_id,
+                tool_input,
+                occurred_at,
+            };
+            if let Err(err) = self.call(client.send_telemetry(&req)).await {
+                self.host().logger().warn(
+                    "hook telemetry delivery failed (non-blocking)",
+                    &[("event", canonical_event), ("error", &err.to_string())],
+                );
             }
-            Ok(response) => {
-                // "deny", or any value this crate doesn't recognise — fail
-                // safe rather than assume "allow" for an unrecognised wire
-                // value.
-                self.record_decision("deny");
-                let reason = if response.reason.is_empty() {
-                    "denied by WaddleAI".to_string()
-                } else {
-                    response.reason
-                };
-                HookOutcome::Deny {
-                    reason,
-                    source: DecisionSource::Live,
+            self.record_decision("allow");
+            return HookOutcome::Allow {
+                reason: "telemetry".to_string(),
+            };
+        }
+
+        let req = EvaluateRequest {
+            hook_version: "1",
+            ecosystem: ecosystem.as_str().to_string(),
+            event: canonical_event.to_string(),
+            tool_name,
+            tool_input: tool_input.clone(),
+            session_id,
+            workspace_path,
+            occurred_at,
+        };
+
+        match self.call(client.evaluate_hook_event(&req)).await {
+            Ok(response) => match response.decision.as_str() {
+                "allow" => {
+                    self.record_decision("allow");
+                    HookOutcome::Allow {
+                        reason: response.reason.unwrap_or_default(),
+                    }
                 }
-            }
+                "ask" => {
+                    self.record_decision("ask");
+                    let reason = response
+                        .reason
+                        .filter(|r| !r.is_empty())
+                        .unwrap_or_else(|| "confirmation required by WaddleAI".to_string());
+                    HookOutcome::Ask {
+                        reason,
+                        rule_id: response.rule_id,
+                    }
+                }
+                "redirect" => {
+                    self.record_decision("redirect");
+                    HookOutcome::Redirect {
+                        reason: response.reason.unwrap_or_default(),
+                        rule_id: response.rule_id,
+                        redirect_model: response.redirect_model,
+                        active_skills: response.active_skills,
+                    }
+                }
+                _ => {
+                    // "deny", or any unrecognised wire value — fail safe.
+                    self.record_decision("deny");
+                    let reason = response
+                        .reason
+                        .filter(|r| !r.is_empty())
+                        .unwrap_or_else(|| "denied by WaddleAI".to_string());
+                    HookOutcome::Deny {
+                        reason,
+                        rule_id: response.rule_id,
+                        source: DecisionSource::Live,
+                    }
+                }
+            },
             Err(_err) => {
-                let subject = payload.get("subject").and_then(Value::as_str);
                 let cache = self.denylist_snapshot();
-                if let Some(subject) = subject
+                if let Some(pattern) = cache.matches_tool_input(&tool_input) {
+                    self.record_decision("deny");
+                    return HookOutcome::Deny {
+                        reason: format!("matched cached Tier-1 denylist pattern: {pattern}"),
+                        rule_id: None,
+                        source: DecisionSource::CachedDenylist,
+                    };
+                }
+                if let Some(subject) = payload.get("subject").and_then(Value::as_str)
                     && cache.contains(subject)
                 {
                     self.record_decision("deny");
                     return HookOutcome::Deny {
                         reason: "subject matches the cached Tier-1 denylist".to_string(),
+                        rule_id: None,
                         source: DecisionSource::CachedDenylist,
                     };
                 }
@@ -493,19 +604,21 @@ impl WaddleAiModule {
     fn shim_for(&self, ecosystem: Ecosystem) -> Box<dyn Shim> {
         if let Some(dir) = self.inner.hook_target_dir_override.get() {
             let filename = match ecosystem {
-                Ecosystem::Claude => "claude-settings.json",
+                Ecosystem::Claude | Ecosystem::Cortex => "claude-settings.json",
                 Ecosystem::Gemini => "gemini-hooks.json",
                 Ecosystem::VsCode => "vscode-settings.json",
             };
             let target = dir.join(filename);
             return match ecosystem {
-                Ecosystem::Claude => Box::new(hooks::claude::ClaudeShim::with_target(target)),
+                Ecosystem::Claude | Ecosystem::Cortex => {
+                    Box::new(hooks::claude::ClaudeShim::with_target(target))
+                }
                 Ecosystem::Gemini => Box::new(hooks::gemini::GeminiShim::with_target(target)),
                 Ecosystem::VsCode => Box::new(hooks::vscode::VsCodeShim::with_target(target)),
             };
         }
         match ecosystem {
-            Ecosystem::Claude => Box::new(hooks::claude::ClaudeShim::new()),
+            Ecosystem::Claude | Ecosystem::Cortex => Box::new(hooks::claude::ClaudeShim::new()),
             Ecosystem::Gemini => Box::new(hooks::gemini::GeminiShim::new()),
             Ecosystem::VsCode => Box::new(hooks::vscode::VsCodeShim::new()),
         }
@@ -612,6 +725,32 @@ impl WaddleAiModule {
             let _ = task.handle.await;
         }
     }
+}
+
+/// Formats `SystemTime::now()` as an RFC3339 UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`)
+/// without pulling in a date/time crate.
+fn now_rfc3339() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let hour = rem / 3_600;
+    let minute = (rem % 3_600) / 60;
+    let second = rem % 60;
+    // Howard Hinnant's civil_from_days algorithm (days since 1970-01-01).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + i64::from(m <= 2);
+    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 /// Builds a fresh, un-initialised [`WaddleAiModule`] — the
@@ -950,7 +1089,7 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(200, r#"{"status":"ok"}"#),
             )
             .await;
@@ -972,7 +1111,7 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(200, r#"{"status":"ok"}"#),
             )
             .await;
@@ -990,7 +1129,7 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(401, r#"{"error":"bad key"}"#),
             )
             .await;
@@ -1048,7 +1187,7 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(200, r#"{"status":"ok"}"#),
             )
             .await;
@@ -1059,7 +1198,10 @@ mod tests {
         assert_eq!(status.detail.get("server"), Some(&server.base_url));
         assert_eq!(status.detail.get("key_present"), Some(&"true".to_string()));
         assert_eq!(status.detail.get("auth"), Some(&"ok".to_string()));
-        assert_eq!(status.detail.get("hook_claude"), Some(&"false".to_string()));
+        assert_eq!(
+            status.detail.get("hook_claude-code"),
+            Some(&"false".to_string())
+        );
 
         server.stop().await;
     }
@@ -1087,7 +1229,7 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(200, r#"{"status":"ok"}"#),
             )
             .await;
@@ -1119,15 +1261,21 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/agent-hooks/denylist",
-                MockResponse::json(200, r#"{"version":"5","entries":["bad-thing"]}"#),
+                "/hooks/policy",
+                MockResponse::json(
+                    200,
+                    r#"{"denylist_patterns":[".env*",".git/**"],"updated_at":"2026-11-27T00:00:00Z"}"#,
+                ),
             )
             .await;
         let (module, _dir) = init_module_against(&server).await;
 
         let cache = module.sync_denylist().await.expect("sync succeeds");
-        assert_eq!(cache.entries, vec!["bad-thing".to_string()]);
-        assert_eq!(module.metrics().denylist_entries.get(), 1.0);
+        assert_eq!(
+            cache.entries,
+            vec![".env*".to_string(), ".git/**".to_string()]
+        );
+        assert_eq!(module.metrics().denylist_entries.get(), 2.0);
         assert_eq!(module.metrics().denylist_stale.get(), 0.0);
 
         let reloaded = crate::cache::load(module.denylist_path()).unwrap();
@@ -1142,14 +1290,14 @@ mod tests {
         server
             .respond(
                 "POST",
-                "/agent-hooks/events",
+                "/hooks/evaluate",
                 MockResponse::json(200, r#"{"decision":"allow","reason":"ok"}"#),
             )
             .await;
         let (module, _dir) = init_module_against(&server).await;
 
         let outcome = module
-            .evaluate_hook_event(Ecosystem::Claude, "pre-tool-use", &serde_json::json!({}))
+            .evaluate_hook_event(Ecosystem::Claude, "pre_tool_use", &serde_json::json!({}))
             .await;
         assert_eq!(
             outcome,
@@ -1175,19 +1323,23 @@ mod tests {
         server
             .respond(
                 "POST",
-                "/agent-hooks/events",
-                MockResponse::json(200, r#"{"decision":"deny","reason":"blocked"}"#),
+                "/hooks/evaluate",
+                MockResponse::json(
+                    200,
+                    r#"{"decision":"deny","reason":"blocked","rule_id":"r-9"}"#,
+                ),
             )
             .await;
         let (module, _dir) = init_module_against(&server).await;
 
         let outcome = module
-            .evaluate_hook_event(Ecosystem::Claude, "pre-tool-use", &serde_json::json!({}))
+            .evaluate_hook_event(Ecosystem::Claude, "pre_tool_use", &serde_json::json!({}))
             .await;
         assert_eq!(
             outcome,
             HookOutcome::Deny {
                 reason: "blocked".to_string(),
+                rule_id: Some(serde_json::json!("r-9")),
                 source: DecisionSource::Live,
             }
         );
@@ -1196,7 +1348,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn evaluate_hook_event_falls_back_to_a_cached_denylist_match_when_unreachable() {
+    async fn evaluate_hook_event_preserves_ask_and_redirect_decisions() {
+        let server = MockServer::start().await;
+        server
+            .respond(
+                "POST",
+                "/hooks/evaluate",
+                MockResponse::json(200, r#"{"decision":"ask","reason":"confirm?"}"#),
+            )
+            .await;
+        let (module, _dir) = init_module_against(&server).await;
+
+        let ask_outcome = module
+            .evaluate_hook_event(Ecosystem::Claude, "pre_tool_use", &serde_json::json!({}))
+            .await;
+        assert_eq!(
+            ask_outcome,
+            HookOutcome::Ask {
+                reason: "confirm?".to_string(),
+                rule_id: None,
+            }
+        );
+
+        server.stop().await;
+
+        let redirect_server = MockServer::start().await;
+        redirect_server
+            .respond(
+                "POST",
+                "/hooks/evaluate",
+                MockResponse::json(
+                    200,
+                    r#"{"decision":"redirect","reason":"use local","redirect_model":"qwen2.5:7b","active_skills":["scan"]}"#,
+                ),
+            )
+            .await;
+        let (redirect_module, _dir2) = init_module_against(&redirect_server).await;
+        let redirect_outcome = redirect_module
+            .evaluate_hook_event(Ecosystem::Claude, "pre_tool_use", &serde_json::json!({}))
+            .await;
+        assert_eq!(
+            redirect_outcome,
+            HookOutcome::Redirect {
+                reason: "use local".to_string(),
+                rule_id: None,
+                redirect_model: Some("qwen2.5:7b".to_string()),
+                active_skills: Some(vec!["scan".to_string()]),
+            }
+        );
+
+        redirect_server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn evaluate_hook_event_routes_telemetry_events_without_blocking() {
+        let unreachable = MockServer::unreachable_base_url().await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut host = FakeHost::new(dir.path().to_path_buf());
+        host.config = config_bytes(&unreachable);
+        let module = WaddleAiModule::new();
+        module.init(Arc::new(host)).await.unwrap();
+
+        for ev in ["post_tool_use", "session_start", "notification"] {
+            let outcome = module
+                .evaluate_hook_event(
+                    Ecosystem::Gemini,
+                    ev,
+                    &serde_json::json!({"tool_name": "Bash"}),
+                )
+                .await;
+            assert_eq!(
+                outcome,
+                HookOutcome::Allow {
+                    reason: "telemetry".to_string()
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn evaluate_hook_event_falls_back_to_glob_cached_denylist_when_unreachable() {
         let unreachable = MockServer::unreachable_base_url().await;
         let dir = tempfile::tempdir().unwrap();
         let mut host = FakeHost::new(dir.path().to_path_buf());
@@ -1207,7 +1438,7 @@ mod tests {
             let mut cache = module.inner.denylist.lock().unwrap();
             cache.record_sync(
                 "1".to_string(),
-                vec!["rm -rf /".to_string()],
+                vec![".env*".to_string(), "*.pem".to_string()],
                 SystemTime::now(),
             );
         }
@@ -1215,14 +1446,18 @@ mod tests {
         let outcome = module
             .evaluate_hook_event(
                 Ecosystem::Claude,
-                "pre-tool-use",
-                &serde_json::json!({"subject": "rm -rf /"}),
+                "pre_tool_use",
+                &serde_json::json!({
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/app/.env.production"}
+                }),
             )
             .await;
         assert_eq!(
             outcome,
             HookOutcome::Deny {
-                reason: "subject matches the cached Tier-1 denylist".to_string(),
+                reason: "matched cached Tier-1 denylist pattern: .env*".to_string(),
+                rule_id: None,
                 source: DecisionSource::CachedDenylist,
             }
         );
@@ -1265,7 +1500,10 @@ mod tests {
         // config file — verified indirectly via `status`'s detail.
         module.start().await.expect("start succeeds");
         let status = module.status().await.unwrap();
-        assert_eq!(status.detail.get("hook_claude"), Some(&"false".to_string()));
+        assert_eq!(
+            status.detail.get("hook_claude-code"),
+            Some(&"false".to_string())
+        );
 
         module.stop().await.ok();
         server.stop().await;

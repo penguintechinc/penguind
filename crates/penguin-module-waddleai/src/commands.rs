@@ -104,7 +104,7 @@ pub fn command_tree() -> Vec<CommandSpec> {
                 },
                 CommandSpec {
                     name: "install".to_string(),
-                    use_line: "install <claude|gemini|vscode>".to_string(),
+                    use_line: "install <claude-code|cortex|antigravity|vscode>".to_string(),
                     short: "Install a hook shim, merging into the ecosystem's own config"
                         .to_string(),
                     flags: vec![json_flag()],
@@ -115,7 +115,7 @@ pub fn command_tree() -> Vec<CommandSpec> {
                 },
                 CommandSpec {
                     name: "uninstall".to_string(),
-                    use_line: "uninstall <claude|gemini|vscode>".to_string(),
+                    use_line: "uninstall <claude-code|cortex|antigravity|vscode>".to_string(),
                     short: "Uninstall a hook shim, restoring the config byte-for-byte".to_string(),
                     flags: vec![json_flag()],
                     min_args: 1,
@@ -155,9 +155,9 @@ pub fn command_tree() -> Vec<CommandSpec> {
                 .to_string(),
             subcommands: vec![
                 CommandSpec {
-                    name: "pre-tool-use".to_string(),
-                    use_line: "pre-tool-use".to_string(),
-                    short: "Evaluate a pre-tool-use event (payload read from stdin)".to_string(),
+                    name: "pre_tool_use".to_string(),
+                    use_line: "pre_tool_use".to_string(),
+                    short: "Evaluate a pre_tool_use event (payload read from stdin)".to_string(),
                     // No positional: matches the real upstream hook
                     // contract (Claude Code/Antigravity deliver the event
                     // payload on the invoked command's stdin, not as an
@@ -168,9 +168,28 @@ pub fn command_tree() -> Vec<CommandSpec> {
                     ..Default::default()
                 },
                 CommandSpec {
-                    name: "post-tool-use".to_string(),
-                    use_line: "post-tool-use".to_string(),
-                    short: "Evaluate a post-tool-use event (payload read from stdin)".to_string(),
+                    name: "post_tool_use".to_string(),
+                    use_line: "post_tool_use".to_string(),
+                    short: "Forward a post_tool_use telemetry event (payload read from stdin)"
+                        .to_string(),
+                    min_args: 0,
+                    max_args: 0,
+                    ..Default::default()
+                },
+                CommandSpec {
+                    name: "session_start".to_string(),
+                    use_line: "session_start".to_string(),
+                    short: "Forward a session_start telemetry event (payload read from stdin)"
+                        .to_string(),
+                    min_args: 0,
+                    max_args: 0,
+                    ..Default::default()
+                },
+                CommandSpec {
+                    name: "notification".to_string(),
+                    use_line: "notification".to_string(),
+                    short: "Forward a notification telemetry event (payload read from stdin)"
+                        .to_string(),
                     min_args: 0,
                     max_args: 0,
                     ..Default::default()
@@ -535,14 +554,14 @@ fn denylist_status(module: &WaddleAiModule, as_json: bool) -> CommandResult {
 /// module's top-level doc for the exit-code contract and the argv-transit
 /// caveat.
 async fn hook_command(module: &WaddleAiModule, path: &[String], args: &[String]) -> CommandResult {
-    let Some(event) = path.get(1).map(String::as_str) else {
+    let Some(raw_event) = path.get(1).map(String::as_str) else {
         return usage_result(
-            "Usage: waddleai hook {pre-tool-use|post-tool-use} (payload piped on stdin)",
+            "Usage: waddleai hook {pre_tool_use|post_tool_use|session_start|notification} (payload piped on stdin)",
         );
     };
-    if !crate::hooks::HOOK_EVENTS.contains(&event) {
-        return unknown_subcommand(event);
-    }
+    let Some(event) = crate::hooks::normalize_event(raw_event) else {
+        return unknown_subcommand(raw_event);
+    };
     // `args` here was populated only by `bins/penguin`'s piped-stdin
     // fallback — `hook.<event>`'s `CommandSpec` declares `max_args: 0`, so
     // this was never a literal shell token. Empty means either nothing was
@@ -584,16 +603,56 @@ async fn hook_command(module: &WaddleAiModule, path: &[String], args: &[String])
                 .unwrap_or_default(),
             exit_code: 0,
         },
-        HookOutcome::Deny { reason, source } => {
+        HookOutcome::Deny {
+            reason,
+            rule_id,
+            source,
+        } => {
             let source_str = match source {
                 DecisionSource::Live => "live",
                 DecisionSource::CachedDenylist => "cached_denylist",
             };
-            let value = json!({"decision": "deny", "reason": reason, "source": source_str});
+            let value = json!({
+                "decision": "deny",
+                "reason": reason,
+                "rule_id": rule_id,
+                "source": source_str,
+            });
             CommandResult {
                 output: serde_json::to_string(&value).unwrap_or_default(),
                 json: serde_json::to_vec(&value).unwrap_or_default(),
                 exit_code: 1,
+            }
+        }
+        HookOutcome::Ask { reason, rule_id } => {
+            let value = json!({
+                "decision": "ask",
+                "reason": reason,
+                "rule_id": rule_id,
+            });
+            CommandResult {
+                output: serde_json::to_string(&value).unwrap_or_default(),
+                json: serde_json::to_vec(&value).unwrap_or_default(),
+                exit_code: 2,
+            }
+        }
+        HookOutcome::Redirect {
+            reason,
+            rule_id,
+            redirect_model,
+            active_skills,
+        } => {
+            let value = json!({
+                "decision": "redirect",
+                "reason": reason,
+                "rule_id": rule_id,
+                "redirect_model": redirect_model,
+                "active_skills": active_skills,
+            });
+            CommandResult {
+                output: serde_json::to_string(&value).unwrap_or_default(),
+                json: serde_json::to_vec(&value).unwrap_or_default(),
+                exit_code: 0,
             }
         }
         HookOutcome::Unavailable { reason } => {
@@ -796,7 +855,12 @@ mod tests {
         assert_eq!(key_set.min_args, 0);
 
         let hook = tree.iter().find(|c| c.name == "hook").unwrap();
-        for event in ["pre-tool-use", "post-tool-use"] {
+        for event in [
+            "pre_tool_use",
+            "post_tool_use",
+            "session_start",
+            "notification",
+        ] {
             let spec = hook.subcommands.iter().find(|c| c.name == event).unwrap();
             assert_eq!(
                 spec.max_args, 0,
@@ -850,7 +914,7 @@ mod tests {
             &[],
         )
         .await;
-        assert!(list.output.contains("claude: installed"));
+        assert!(list.output.contains("claude-code: installed"));
         assert!(
             list.output
                 .contains(&hook_target_dir.path().display().to_string()),
@@ -885,8 +949,11 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/agent-hooks/denylist",
-                MockResponse::json(200, r#"{"version":"9","entries":["a","b"]}"#),
+                "/hooks/policy",
+                MockResponse::json(
+                    200,
+                    r#"{"denylist_patterns":[".env*",".git/**"],"updated_at":"2026-11-27T00:00:00Z"}"#,
+                ),
             )
             .await;
         let module = init_module(&server).await;
@@ -919,7 +986,7 @@ mod tests {
         server
             .respond(
                 "POST",
-                "/agent-hooks/events",
+                "/hooks/evaluate",
                 MockResponse::json(200, r#"{"decision":"allow","reason":"ok"}"#),
             )
             .await;
@@ -936,6 +1003,56 @@ mod tests {
         assert!(result.output.contains("\"allow\""));
 
         server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn hook_command_handles_redirect_and_ask_decisions() {
+        let server = MockServer::start().await;
+        server
+            .respond(
+                "POST",
+                "/hooks/evaluate",
+                MockResponse::json(
+                    200,
+                    r#"{"decision":"redirect","reason":"use local","redirect_model":"qwen2.5:7b","active_skills":["git"]}"#,
+                ),
+            )
+            .await;
+        let module = init_module(&server).await;
+
+        let redirect_res = module_dispatch(
+            &module,
+            &["hook".to_string(), "pre_tool_use".to_string()],
+            &HashMap::new(),
+            &[r#"{"tool_name":"Bash","tool_input":{"command":"git status"}}"#.to_string()],
+        )
+        .await;
+        assert_eq!(redirect_res.exit_code, 0);
+        assert!(redirect_res.output.contains("\"redirect\""));
+        assert!(redirect_res.output.contains("qwen2.5:7b"));
+
+        server.stop().await;
+
+        let ask_server = MockServer::start().await;
+        ask_server
+            .respond(
+                "POST",
+                "/hooks/evaluate",
+                MockResponse::json(200, r#"{"decision":"ask","reason":"confirm?"}"#),
+            )
+            .await;
+        let ask_module = init_module(&ask_server).await;
+        let ask_res = module_dispatch(
+            &ask_module,
+            &["hook".to_string(), "pre_tool_use".to_string()],
+            &HashMap::new(),
+            &[r#"{"tool_name":"Bash","tool_input":{"command":"rm foo"}}"#.to_string()],
+        )
+        .await;
+        assert_eq!(ask_res.exit_code, 2);
+        assert!(ask_res.output.contains("\"ask\""));
+
+        ask_server.stop().await;
     }
 
     #[tokio::test]
@@ -986,7 +1103,7 @@ mod tests {
         server
             .respond(
                 "POST",
-                "/agent-hooks/events",
+                "/hooks/evaluate",
                 MockResponse::json(200, r#"{"decision":"allow","reason":"ok"}"#),
             )
             .await;

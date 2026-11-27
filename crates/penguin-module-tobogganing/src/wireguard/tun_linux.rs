@@ -7,7 +7,7 @@
 #![allow(unsafe_code)]
 
 #[allow(unused_imports)]
-use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 
 use crate::wireguard::WgBackendError;
 
@@ -28,6 +28,12 @@ pub struct TunFd {
 impl AsRawFd for TunFd {
     fn as_raw_fd(&self) -> i32 {
         self.fd.as_raw_fd()
+    }
+}
+
+impl AsFd for TunFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
     }
 }
 

@@ -29,6 +29,7 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::fsutil;
 
@@ -85,12 +86,26 @@ impl DenylistCache {
         }
     }
 
-    /// Whether `subject` exactly matches a cached denylist entry — see this
-    /// module's doc for why this is a cache lookup, not a policy
-    /// evaluation. No globbing, prefix matching, or regex: an entry either
-    /// is or is not present verbatim.
+    /// Whether `subject` matches any cached denylist pattern using
+    /// case-insensitive glob search (`*`, `**`, `?` anywhere in `subject`) —
+    /// see [`glob_search`].
     pub fn contains(&self, subject: &str) -> bool {
-        self.entries.iter().any(|entry| entry == subject)
+        self.entries
+            .iter()
+            .any(|pattern| glob_search(pattern, subject))
+    }
+
+    /// Flattens `tool_input` into its string leaves and returns the first
+    /// cached denylist pattern that matches via [`glob_search`], if any.
+    pub fn matches_tool_input(&self, tool_input: &Value) -> Option<&str> {
+        let text = flatten_tool_input_text(tool_input);
+        if text.is_empty() {
+            return None;
+        }
+        self.entries
+            .iter()
+            .find(|pattern| glob_search(pattern, &text))
+            .map(String::as_str)
     }
 
     /// Records a fresh successful sync, replacing the previous snapshot
@@ -101,6 +116,91 @@ impl DenylistCache {
         self.entries = entries;
         self.synced_at_unix = now.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
     }
+}
+
+/// Flattens all string leaf values in `tool_input` into one `\x1f`-delimited
+/// string, matching `waddleai/shared/security/hooks_denylist.py`.
+pub fn flatten_tool_input_text(tool_input: &Value) -> String {
+    fn collect(val: &Value, out: &mut Vec<String>) {
+        match val {
+            Value::String(s) if !s.is_empty() => out.push(s.clone()),
+            Value::Array(items) => {
+                for item in items {
+                    collect(item, out);
+                }
+            }
+            Value::Object(map) => {
+                for v in map.values() {
+                    collect(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut leaves = Vec::new();
+    collect(tool_input, &mut leaves);
+    leaves.join("\x1f")
+}
+
+/// Case-insensitive shell-glob-like substring search (`*`, `**`, `?`),
+/// matching `waddleai/shared/security/hooks_denylist.py::glob_search`.
+/// `*` and `**` both match zero or more characters; `?` matches any single
+/// character; matching is unanchored (searches anywhere in `text`).
+pub fn glob_search(pattern: &str, text: &str) -> bool {
+    if pattern.is_empty() || text.is_empty() {
+        return false;
+    }
+    let pat: Vec<char> = pattern.chars().flat_map(char::to_lowercase).collect();
+    let txt: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
+    // Collapse consecutive `*` so `**` behaves identically to `*`.
+    let mut collapsed = Vec::with_capacity(pat.len());
+    for ch in pat {
+        if ch == '*' && collapsed.last() == Some(&'*') {
+            continue;
+        }
+        collapsed.push(ch);
+    }
+
+    // Standard two-pointer wildcard match for `*<collapsed>*` against `txt`.
+    // Trying every start index in `txt` keeps unanchored semantics exact and
+    // O(pat.len() * txt.len()) worst-case.
+    for start in 0..txt.len() {
+        if glob_match_prefix(&collapsed, &txt[start..]) {
+            return true;
+        }
+    }
+    false
+}
+
+fn glob_match_prefix(pat: &[char], txt: &[char]) -> bool {
+    let (mut pi, mut ti) = (0, 0);
+    let mut star_pi: Option<usize> = None;
+    let mut star_ti: usize = 0;
+
+    while pi < pat.len() {
+        if pat[pi] == '*' {
+            // Trailing `*` matches the rest of `txt`.
+            if pi + 1 == pat.len() {
+                return true;
+            }
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if ti < txt.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if let Some(sp) = star_pi {
+            star_ti += 1;
+            if star_ti > txt.len() {
+                return false;
+            }
+            ti = star_ti;
+            pi = sp + 1;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 /// Loads a [`DenylistCache`] from `path`. A missing file yields
@@ -138,16 +238,53 @@ mod tests {
     }
 
     #[test]
-    fn contains_is_exact_match_only() {
+    fn contains_matches_glob_patterns_case_insensitively() {
         let mut cache = DenylistCache::empty();
         cache.record_sync(
             "1".to_string(),
-            vec!["rm -rf /".to_string()],
+            vec![
+                "rm -rf /".to_string(),
+                ".env*".to_string(),
+                ".git/**".to_string(),
+                "*.pem".to_string(),
+            ],
             SystemTime::now(),
         );
         assert!(cache.contains("rm -rf /"));
-        assert!(!cache.contains("rm -rf /tmp"));
-        assert!(!cache.contains("RM -RF /"));
+        assert!(cache.contains("RM -RF /"));
+        assert!(cache.contains("cat .env.production"));
+        assert!(cache.contains("echo hi > .git/hooks/pre-commit"));
+        assert!(cache.contains("openssl x509 -in server.PEM"));
+        assert!(!cache.contains("ls -la src/main.rs"));
+    }
+
+    #[test]
+    fn matches_tool_input_flattens_nested_strings_and_applies_globs() {
+        let mut cache = DenylistCache::empty();
+        cache.record_sync(
+            "2".to_string(),
+            vec![
+                ".env*".to_string(),
+                ".git/**".to_string(),
+                "*.pem".to_string(),
+            ],
+            SystemTime::now(),
+        );
+        let input = serde_json::json!({
+            "command": "cat",
+            "args": ["--file", "/repo/.env.local"],
+            "meta": {"cwd": "/repo"}
+        });
+        assert_eq!(cache.matches_tool_input(&input), Some(".env*"));
+
+        let git_input = serde_json::json!({"file_path": "/repo/.git/config"});
+        assert_eq!(cache.matches_tool_input(&git_input), Some(".git/**"));
+
+        let pem_input = serde_json::json!({"path": "certs/client.pem"});
+        assert_eq!(cache.matches_tool_input(&pem_input), Some("*.pem"));
+
+        let safe_input = serde_json::json!({"file_path": "src/lib.rs"});
+        assert_eq!(cache.matches_tool_input(&safe_input), None);
     }
 
     #[test]
