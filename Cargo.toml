@@ -41,10 +41,10 @@ penguin-daemon = { path = "crates/penguin-daemon" }
 # resolve a builtin OR an external module through one code path.
 penguin-extplugin = { path = "crates/penguin-extplugin" }
 penguin-goplugin-host = { path = "crates/penguin-goplugin-host" }
-# waddlebot: the hub REST client + the built-in module that wraps it (module
-# and its local bridge land in the waddlebot tracks).
-waddlebot-client = { path = "crates/waddlebot-client" }
-penguin-module-waddlebot = { path = "crates/penguin-module-waddlebot" }
+# waddles: shared hub REST client + social desktop client + gateway/OBS bridge.
+waddles-client = { path = "crates/waddles-client" }
+penguin-module-waddles-social = { path = "crates/penguin-module-waddles-social" }
+penguin-module-waddles-gateway = { path = "crates/penguin-module-waddles-gateway" }
 # Built-in modules for M6+ (squawk, tobogganing — Go porting milestones).
 penguin-module-squawk = { path = "crates/penguin-module-squawk" }
 penguin-module-tobogganing = { path = "crates/penguin-module-tobogganing" }

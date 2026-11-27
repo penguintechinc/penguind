@@ -47,17 +47,31 @@
       "label_keys": []
     }
   ],
-  "waddlebot": [
+  "waddles_social": [
     {
-      "name": "penguin_module_waddlebot_api_errors_total",
+      "name": "penguin_module_waddles_social_api_errors_total",
       "label_keys": []
     },
     {
-      "name": "penguin_module_waddlebot_api_requests_total",
+      "name": "penguin_module_waddles_social_api_requests_total",
       "label_keys": []
     },
     {
-      "name": "penguin_module_waddlebot_up",
+      "name": "penguin_module_waddles_social_up",
+      "label_keys": []
+    }
+  ],
+  "waddles_gateway": [
+    {
+      "name": "penguin_module_waddles_gateway_api_errors_total",
+      "label_keys": []
+    },
+    {
+      "name": "penguin_module_waddles_gateway_api_requests_total",
+      "label_keys": []
+    },
+    {
+      "name": "penguin_module_waddles_gateway_up",
       "label_keys": []
     }
   ]

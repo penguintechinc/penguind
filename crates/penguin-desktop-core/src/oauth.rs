@@ -35,7 +35,20 @@ impl OAuthPlatform {
     }
 }
 
-/// Parameters extracted from the `waddles://oauth/callback?token=...&state=...` deep-link.
+/// The desktop OAuth deep-link redirect URI allowlisted by Waddles `hub-api`.
+pub const DESKTOP_REDIRECT_URI: &str = "waddles://oauth/callback";
+
+/// Parsed parameters from a `waddles://oauth/callback` deep-link URL.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthCallback {
+    /// Single-use exchange code (redeemed via `POST /api/v1/auth/exchange`).
+    pub code: Option<String>,
+    /// Legacy direct JWT parameter, if present.
+    pub token: Option<String>,
+    /// The state parameter echoed back by the hub.
+    pub state: String,
+}
+/// Legacy parameters extracted from `waddles://oauth/callback?token=...&state=...`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CallbackParams {
     /// The JWT issued by the hub (should contain `access_token`/`refresh_token`).
@@ -96,14 +109,17 @@ pub fn start_oauth(hub_base_url: &str, platform: OAuthPlatform) -> Result<(Strin
     // Generate a cryptographically secure state parameter (256-bit entropy, base64url-encoded)
     let state = generate_oauth_state()?;
 
-    // Build the authorize endpoint.
-    let authorize_url = hub_url
+    // Build the authorize endpoint with redirect_uri=waddles://oauth/callback and state.
+    let mut authorize_url = hub_url
         .join(&format!("/api/v1/auth/oauth/{}", platform.as_str()))
         .map_err(|e| DesktopError::UrlError(format!("failed to build authorize URL: {}", e)))?;
 
-    // Add the state parameter so the hub can send it back.
-    let authorize_url_with_state =
-        format!("{}?state={}", authorize_url, urlencoding::encode(&state));
+    authorize_url
+        .query_pairs_mut()
+        .append_pair("redirect_uri", DESKTOP_REDIRECT_URI)
+        .append_pair("state", &state);
+
+    let authorize_url_with_state = authorize_url.to_string();
 
     debug!(platform = platform.as_str(), "OAuth authorize URL built");
 
@@ -113,6 +129,122 @@ pub fn start_oauth(hub_base_url: &str, platform: OAuthPlatform) -> Result<(Strin
     };
 
     Ok((authorize_url_with_state, context))
+}
+
+/// Parses a `waddles://oauth/callback?code=...&state=...` deep-link URL.
+/// Rejects any URL that does not match scheme `waddles`, host `oauth`, path `/callback`.
+pub fn parse_callback_url(callback_url: &str) -> Result<OAuthCallback> {
+    let parsed = url::Url::parse(callback_url)
+        .map_err(|e| DesktopError::InvalidCallback(format!("invalid callback URL: {e}")))?;
+
+    if parsed.scheme() != "waddles"
+        || parsed.host_str() != Some("oauth")
+        || parsed.path() != "/callback"
+    {
+        return Err(DesktopError::InvalidCallback(
+            "callback URL must use waddles://oauth/callback".to_string(),
+        ));
+    }
+
+    let mut code: Option<String> = None;
+    let mut token: Option<String> = None;
+    let mut state: Option<String> = None;
+    let mut error: Option<String> = None;
+
+    for (k, v) in parsed.query_pairs() {
+        match k.as_ref() {
+            "code" if !v.is_empty() => code = Some(v.into_owned()),
+            "token" if !v.is_empty() => token = Some(v.into_owned()),
+            "state" if !v.is_empty() => state = Some(v.into_owned()),
+            "error" if !v.is_empty() => error = Some(v.into_owned()),
+            _ => {}
+        }
+    }
+
+    if let Some(err) = error {
+        return Err(DesktopError::OAuthError(format!(
+            "oauth callback error: {err}"
+        )));
+    }
+
+    let state = state.ok_or_else(|| {
+        DesktopError::InvalidCallback("missing state parameter in OAuth callback".to_string())
+    })?;
+
+    if code.is_none() && token.is_none() {
+        return Err(DesktopError::InvalidCallback(
+            "missing code or token parameter in OAuth callback".to_string(),
+        ));
+    }
+
+    Ok(OAuthCallback { code, token, state })
+}
+
+/// Redeems a single-use OAuth exchange `code` at `POST {hub_base_url}/api/v1/auth/exchange`
+/// after constant-time `state` verification.
+pub async fn exchange_oauth_code(
+    hub_base_url: &str,
+    code: &str,
+    callback_state: &str,
+    stored_state: &str,
+) -> Result<OAuthTokens> {
+    if !verify_oauth_state(callback_state, stored_state) {
+        return Err(DesktopError::InvalidCallback(
+            "state mismatch (CSRF or forged callback)".to_string(),
+        ));
+    }
+    if code.trim().is_empty() {
+        return Err(DesktopError::InvalidCallback(
+            "missing OAuth exchange code".to_string(),
+        ));
+    }
+
+    let hub_url = url::Url::parse(hub_base_url)
+        .map_err(|e| DesktopError::UrlError(format!("invalid hub URL: {e}")))?;
+    let exchange_url = hub_url
+        .join("/api/v1/auth/exchange")
+        .map_err(|e| DesktopError::UrlError(format!("failed to build exchange URL: {e}")))?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(exchange_url)
+        .json(&serde_json::json!({ "code": code }))
+        .send()
+        .await
+        .map_err(|e| DesktopError::OAuthError(format!("OAuth exchange request failed: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(DesktopError::OAuthError(format!(
+            "OAuth exchange failed with status {}",
+            response.status()
+        )));
+    }
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| DesktopError::OAuthError(format!("invalid OAuth exchange JSON: {e}")))?;
+
+    let access_token = body
+        .get("token")
+        .or_else(|| body.get("access_token"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            DesktopError::OAuthError("no token in OAuth exchange response".to_string())
+        })?;
+
+    let refresh_token = body
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    Ok(OAuthTokens {
+        access_token,
+        refresh_token,
+    })
 }
 
 /// Processes an OAuth callback from the `waddles://` deep-link.
@@ -309,8 +441,56 @@ mod tests {
 
         // State should be present and URL-encoded in the URL
         assert!(url.contains("state="));
+        assert!(url.contains("redirect_uri=waddles%3A%2F%2Foauth%2Fcallback"));
         // CSPRNG-generated state should be base64url-encoded, which contains only safe chars
         // but urlencoding::encode may still encode it; verify it's in the URL
         assert!(!_context.state.is_empty());
+    }
+
+    #[test]
+    fn test_parse_callback_url_code_and_state() {
+        let cb = parse_callback_url("waddles://oauth/callback?code=exch_123&state=st_abc").unwrap();
+        assert_eq!(cb.code.as_deref(), Some("exch_123"));
+        assert_eq!(cb.token, None);
+        assert_eq!(cb.state, "st_abc");
+    }
+
+    #[test]
+    fn test_parse_callback_url_rejects_wrong_scheme_or_missing_fields() {
+        assert!(parse_callback_url("https://evil.com/oauth/callback?code=1&state=2").is_err());
+        assert!(parse_callback_url("waddles://other/callback?code=1&state=2").is_err());
+        assert!(parse_callback_url("waddles://oauth/callback?code=1").is_err());
+        assert!(parse_callback_url("waddles://oauth/callback?state=2").is_err());
+        assert!(
+            parse_callback_url("waddles://oauth/callback?error=access_denied&state=2").is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exchange_oauth_code_posts_to_auth_exchange() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/auth/exchange"))
+            .and(body_json(serde_json::json!({ "code": "exch_xyz" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "token": "jwt_session_token"
+            })))
+            .mount(&server)
+            .await;
+
+        let tokens = exchange_oauth_code(&server.uri(), "exch_xyz", "st_1", "st_1")
+            .await
+            .expect("exchange succeeds");
+        assert_eq!(tokens.access_token, "jwt_session_token");
+        assert_eq!(tokens.refresh_token, None);
+
+        let err = exchange_oauth_code(&server.uri(), "exch_xyz", "bad_state", "st_1")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("state mismatch"));
     }
 }

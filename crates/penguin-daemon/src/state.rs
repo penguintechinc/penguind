@@ -225,7 +225,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut state = PersistedState::default();
         state.add("squawk");
-        state.add("waddlebot");
+        state.add("waddles-gateway");
         state.save(dir.path()).unwrap();
 
         let loaded = PersistedState::load(dir.path()).unwrap();
@@ -247,14 +247,14 @@ mod tests {
     #[test]
     fn serialized_order_is_deterministic_regardless_of_insertion_order() {
         let mut a = PersistedState::default();
-        a.add("waddlebot");
+        a.add("waddles-gateway");
         a.add("squawk");
         a.add("marchproxy");
 
         let mut b = PersistedState::default();
         b.add("squawk");
         b.add("marchproxy");
-        b.add("waddlebot");
+        b.add("waddles-gateway");
 
         let dir = TempDir::new().unwrap();
         a.save(dir.path()).unwrap();
