@@ -69,7 +69,7 @@ async fn main() -> ExitCode {
     let mut bridge_client = BridgeActionProxyClient::new(channel);
     let req = BridgeActionRequest {
         api_version: "v1".to_string(),
-        module_name: "waddlebot".to_string(),
+        module_name: "waddles-gateway".to_string(),
         action_type: "webhook".to_string(),
         webhook_name: "nonexistent-test-webhook".to_string(),
         ..Default::default()

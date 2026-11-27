@@ -26,7 +26,14 @@ pub fn builtin_modules() -> BTreeMap<String, Factory> {
         "tobogganing".to_string(),
         penguin_module_tobogganing::factory,
     );
-    registry.insert("waddlebot".to_string(), penguin_module_waddlebot::factory);
+    registry.insert(
+        "waddles-social".to_string(),
+        penguin_module_waddles_social::factory,
+    );
+    registry.insert(
+        "waddles-gateway".to_string(),
+        penguin_module_waddles_gateway::factory,
+    );
     registry.insert("waddleai".to_string(), penguin_module_waddleai::factory);
     registry
 }
@@ -74,22 +81,39 @@ mod tests {
     }
 
     #[test]
-    fn waddlebot_is_registered_as_a_builtin() {
+    fn waddles_social_is_registered_as_a_builtin() {
         let registry = builtin_modules();
-        assert!(registry.contains_key("waddlebot"));
+        assert!(registry.contains_key("waddles-social"));
     }
 
     #[test]
-    fn waddlebot_factory_reports_its_own_identity_before_init() {
+    fn waddles_social_factory_reports_its_own_identity_before_init() {
         let registry = builtin_modules();
-        let factory = registry.get("waddlebot").expect("waddlebot registered");
+        let factory = registry
+            .get("waddles-social")
+            .expect("waddles-social registered");
         let info = factory().info();
-        assert_eq!(info.name, "waddlebot");
+        assert_eq!(info.name, "waddles-social");
         assert_eq!(info.version, "1.0.0");
-        assert!(
-            info.license_feature.is_empty(),
-            "gating waddlebot behind a license entitlement is a deliberate future decision, not defaulted here"
-        );
+        assert!(info.license_feature.is_empty());
+    }
+
+    #[test]
+    fn waddles_gateway_is_registered_as_a_builtin() {
+        let registry = builtin_modules();
+        assert!(registry.contains_key("waddles-gateway"));
+    }
+
+    #[test]
+    fn waddles_gateway_factory_reports_its_own_identity_before_init() {
+        let registry = builtin_modules();
+        let factory = registry
+            .get("waddles-gateway")
+            .expect("waddles-gateway registered");
+        let info = factory().info();
+        assert_eq!(info.name, "waddles-gateway");
+        assert_eq!(info.version, "1.0.0");
+        assert!(info.license_feature.is_empty());
     }
 
     #[test]

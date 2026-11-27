@@ -23,8 +23,9 @@ penguin-telemetry.workspace = true
 # recognise through these two.
 penguin-extplugin.workspace = true
 penguin-goplugin-host.workspace = true
-# waddlebot module: needed for the session proxy registry access in the daemon service.
-penguin-module-waddlebot.workspace = true
+# waddles modules: social owns SessionProxy, gateway owns BridgeActionProxy.
+penguin-module-waddles-social.workspace = true
+penguin-module-waddles-gateway.workspace = true
 
 tokio.workspace = true
 tokio-stream.workspace = true

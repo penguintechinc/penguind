@@ -464,17 +464,17 @@ impl SessionProxy for SessionProxyService {
         let headers: Vec<(String, String)> =
             req.headers.into_iter().map(|h| (h.name, h.value)).collect();
 
-        let proxy_req = penguin_module_waddlebot::session_proxy::HttpRequest {
+        let proxy_req = penguin_module_waddles_social::session_proxy::HttpRequest {
             method: req.method,
             path: req.path,
             headers,
             body: req.body,
         };
 
-        // Forward through the supervisor to the waddlebot module.
+        // Forward through the supervisor to the waddles-social module.
         let resp = self
             .supervisor
-            .proxy_request("waddlebot", proxy_req)
+            .proxy_request("waddles-social", proxy_req)
             .await
             .map_err(|err| proxy_error_to_status(&err))?;
 
@@ -504,7 +504,7 @@ impl SessionProxy for SessionProxyService {
 
         self.supervisor
             .set_user_session(
-                "waddlebot",
+                "waddles-social",
                 req.access_token,
                 if req.refresh_token.is_empty() {
                     None
@@ -599,8 +599,8 @@ fn dispatch_error_to_status(name: &str, err: &SupervisorError) -> Status {
 /// are `INTERNAL`.
 fn proxy_error_to_status(err: &SupervisorError) -> Status {
     match err {
-        SupervisorError::NotLoaded(_) => Status::unavailable("waddlebot module not loaded"),
-        SupervisorError::UnknownModule(_) => Status::not_found("waddlebot module not found"),
+        SupervisorError::NotLoaded(_) => Status::unavailable("waddles-social module not loaded"),
+        SupervisorError::UnknownModule(_) => Status::not_found("waddles-social module not found"),
         SupervisorError::Module(e) => {
             // Check if this is a user-session-not-set error.
             let msg = e.to_string();
@@ -618,8 +618,8 @@ fn proxy_error_to_status(err: &SupervisorError) -> Status {
 /// `UNAVAILABLE`; other module errors are `INTERNAL`.
 fn bridge_action_error_to_status(err: &SupervisorError) -> Status {
     match err {
-        SupervisorError::NotLoaded(_) => Status::unavailable("waddlebot module not loaded"),
-        SupervisorError::UnknownModule(_) => Status::not_found("waddlebot module not found"),
+        SupervisorError::NotLoaded(_) => Status::unavailable("waddles-gateway module not loaded"),
+        SupervisorError::UnknownModule(_) => Status::not_found("waddles-gateway module not found"),
         SupervisorError::Module(e) => Status::internal(format!("bridge action error: {e}")),
         _ => Status::internal(format!("bridge action error: {err}")),
     }

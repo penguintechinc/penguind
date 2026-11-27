@@ -1,0 +1,78 @@
+[package]
+name = "penguin-module-waddles-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The Module contract this crate implements, and the hub REST client it wraps.
+penguin-sdk.workspace = true
+penguin-proto.workspace = true
+waddles-client.workspace = true
+# The local dial-in bridge's unix-socket transport: SO_PEERCRED authorization
+# reusing the exact same decision logic as the daemon's own control socket.
+penguin-ipc.workspace = true
+
+tokio.workspace = true
+# CancellationToken for the bridge's TCP/unix accept-loop shutdown, same
+# pattern squawk-client's Forwarder uses.
+tokio-util.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+prometheus.workspace = true
+# The bridge's loopback HTTP + WebSocket server. No TLS feature — see the
+# workspace dependency's own comment for why.
+axum.workspace = true
+# Per-script bearer token minting (TCP transport only; unix uses SO_PEERCRED).
+rand.workspace = true
+# `Uid::current()` for the unix transport's "the daemon's own uid is always
+# authorized" rule — same call `penguind`'s own control socket setup makes.
+nix.workspace = true
+
+serde.workspace = true
+serde-norway.workspace = true
+serde_json.workspace = true
+# Desktop client hub proxy: generic Bearer passthrough + token refresh.
+# Ring-free (rustls) per workspace standards.
+reqwest.workspace = true
+# OBS WebSocket v5 adapter dependencies: SHA256 hashing for the auth challenge,
+# WebSocket client for the loopback connection, base64 encoding for the auth
+# handshake, and async stream/sink utilities.
+sha2.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+base64.workspace = true
+url.workspace = true
+# UUID generation for obs-websocket v5 request IDs.
+uuid = { version = "1.24.0", features = ["v4"] }
+# parking_lot for synchronous mutex that works in async contexts.
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
+# Schema-compiles-and-accepts-its-own-defaults tests only; not needed at
+# runtime (the daemon's own `penguin-daemon::config::ConfigStore` is what
+# actually validates a module's config against this schema in production) —
+# same rationale as `penguin-module-squawk`'s/`penguin-module-tobogganing`'s
+# identical dev-dependency.
+jsonschema.workspace = true
+# Drives HTTP/JSON requests against the bridge's TCP transport in tests —
+# already the workspace's pinned, ring-free (rustls-no-provider) HTTP client.
+reqwest.workspace = true
+# Encodes a `Sec-WebSocket-Key` for the hand-rolled WebSocket test client in
+# `bridge::http`'s tests (no WS client crate is in the workspace).
+base64.workspace = true
+# obs-adapter tests: mock OBS WebSocket server uses these utilities.
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+# Session proxy integration tests: mock hub server for 401→refresh→retry flows.
+wiremock.workspace = true
+# Rustls crypto provider initialization for reqwest client in tests.
+rustls.workspace = true

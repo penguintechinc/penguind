@@ -18,5 +18,6 @@ penguin-sdk.workspace = true
 # workspace for freshly-landed crates (see `bins/penguind/Cargo.toml`).
 penguin-module-squawk = { path = "../penguin-module-squawk" }
 penguin-module-tobogganing = { path = "../penguin-module-tobogganing" }
-penguin-module-waddlebot.workspace = true
+penguin-module-waddles-social.workspace = true
+penguin-module-waddles-gateway.workspace = true
 penguin-module-waddleai.workspace = true

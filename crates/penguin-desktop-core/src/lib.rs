@@ -34,7 +34,9 @@ pub use action_executor::{
 };
 pub use error::{DesktopError, Result};
 pub use ipc_client::{ApiRequest, ApiResponse, Header, IpcClient};
-pub use oauth::{CallbackParams, OAuthContext, OAuthPlatform, OAuthTokens};
+pub use oauth::{
+    CallbackParams, DESKTOP_REDIRECT_URI, OAuthCallback, OAuthContext, OAuthPlatform, OAuthTokens,
+};
 pub use token_store::{StoredSession, TokenStore};
 
 // Re-export the proto response type for bridge actions
@@ -173,6 +175,54 @@ impl Session {
 
         // generate_oauth_state uses CSPRNG internally
         oauth::start_oauth(hub_url, platform)
+    }
+
+    /// Completes an OAuth flow from a `waddles://oauth/callback` deep-link URL.
+    ///
+    /// Parses `code`/`token` and `state`, redeems exchange codes at
+    /// `POST /api/v1/auth/exchange`, stores tokens in keychain, and primes penguind.
+    pub async fn oauth_complete_url(
+        &mut self,
+        callback_url: &str,
+        stored_state: &str,
+    ) -> Result<()> {
+        debug!("completing OAuth callback URL");
+        let parsed = oauth::parse_callback_url(callback_url)?;
+        let session = self.token_store.load().await?;
+
+        let tokens = if let Some(code) = parsed.code {
+            oauth::exchange_oauth_code(&session.hub_base_url, &code, &parsed.state, stored_state)
+                .await?
+        } else if let Some(token) = parsed.token {
+            oauth::complete_oauth(
+                CallbackParams {
+                    token,
+                    state: parsed.state,
+                },
+                stored_state,
+            )?
+        } else {
+            return Err(DesktopError::InvalidCallback(
+                "missing code or token in OAuth callback".to_string(),
+            ));
+        };
+
+        let updated_session = StoredSession::new(
+            tokens.access_token.clone(),
+            tokens.refresh_token.clone(),
+            session.hub_base_url.clone(),
+        );
+        self.token_store.store(&updated_session).await?;
+
+        self.ipc_client
+            .set_user_session(
+                tokens.access_token,
+                tokens.refresh_token,
+                session.hub_base_url,
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// Completes an OAuth flow with a callback from the `waddles://` deep-link.
@@ -769,7 +819,7 @@ mod tests {
             // The daemon may not be running, so we expect an error (but the path is exercised)
             let result = session
                 .execute_bridge_action(
-                    "waddlebot".to_string(),
+                    "waddles-gateway".to_string(),
                     "obs_command".to_string(),
                     "GetVersion".to_string(),
                     vec![],

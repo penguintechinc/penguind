@@ -3465,7 +3465,8 @@ dependencies = [
  "penguin-goplugin-host",
  "penguin-module-squawk",
  "penguin-module-tobogganing",
- "penguin-module-waddlebot",
+ "penguin-module-waddles-gateway",
+ "penguin-module-waddles-social",
  "penguin-proto",
  "penguin-sdk",
  "penguin-telemetry",
@@ -3504,6 +3505,7 @@ dependencies = [
  "penguin-sdk",
  "penguin-secrets",
  "penguin-telemetry",
+ "reqwest",
  "serde",
  "serde_json",
  "subtle",
@@ -3654,7 +3656,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "penguin-module-waddlebot"
+name = "penguin-module-waddles-gateway"
 version = "0.2.0"
 dependencies = [
  "async-trait",
@@ -3683,7 +3685,29 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "waddlebot-client",
+ "waddles-client",
+ "wiremock",
+]
+
+[[package]]
+name = "penguin-module-waddles-social"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "jsonschema",
+ "penguin-sdk",
+ "prometheus",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "waddles-client",
  "wiremock",
 ]
 
@@ -3704,7 +3728,8 @@ dependencies = [
  "penguin-module-squawk",
  "penguin-module-tobogganing",
  "penguin-module-waddleai",
- "penguin-module-waddlebot",
+ "penguin-module-waddles-gateway",
+ "penguin-module-waddles-social",
  "penguin-sdk",
 ]
 
@@ -5921,7 +5946,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
-name = "waddlebot-client"
+name = "waddles-client"
 version = "0.2.0"
 dependencies = [
  "reqwest",

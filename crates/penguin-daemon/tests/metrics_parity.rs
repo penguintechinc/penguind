@@ -27,7 +27,8 @@ use std::path::PathBuf;
 
 use penguin_module_squawk::metrics::SquawkMetrics;
 use penguin_module_tobogganing::metrics::TobogganingMetrics;
-use penguin_module_waddlebot::metrics::WaddlebotMetrics;
+use penguin_module_waddles_gateway::metrics::WaddlesGatewayMetrics;
+use penguin_module_waddles_social::metrics::WaddlesSocialMetrics;
 
 use penguin_sdk::{Metrics, MetricsError};
 use serde::{Deserialize, Serialize};
@@ -122,9 +123,13 @@ fn metrics_parity() {
     let _tobogganing_metrics = TobogganingMetrics::register(&tobogganing_reg)
         .expect("tobogganing metrics registration succeeds");
 
-    let waddlebot_reg = TestRegisterer::new();
-    let _waddlebot_metrics = WaddlebotMetrics::register(&waddlebot_reg)
-        .expect("waddlebot metrics registration succeeds");
+    let waddles_social_reg = TestRegisterer::new();
+    let _waddles_social_metrics = WaddlesSocialMetrics::register(&waddles_social_reg)
+        .expect("waddles-social metrics registration succeeds");
+
+    let waddles_gateway_reg = TestRegisterer::new();
+    let _waddles_gateway_metrics = WaddlesGatewayMetrics::register(&waddles_gateway_reg)
+        .expect("waddles-gateway metrics registration succeeds");
 
     let squawk_families = squawk_reg
         .gather_families()
@@ -132,9 +137,12 @@ fn metrics_parity() {
     let tobogganing_families = tobogganing_reg
         .gather_families()
         .expect("tobogganing metric families gather succeeds");
-    let waddlebot_families = waddlebot_reg
+    let waddles_social_families = waddles_social_reg
         .gather_families()
-        .expect("waddlebot metric families gather succeeds");
+        .expect("waddles-social metric families gather succeeds");
+    let waddles_gateway_families = waddles_gateway_reg
+        .gather_families()
+        .expect("waddles-gateway metric families gather succeeds");
 
     // Load the golden fixture.
     let golden_path = testdata_dir().join("metrics_parity_golden.json");
@@ -145,7 +153,8 @@ fn metrics_parity() {
     struct GoldenFixture {
         squawk: Vec<MetricFamily>,
         tobogganing: Vec<MetricFamily>,
-        waddlebot: Vec<MetricFamily>,
+        waddles_social: Vec<MetricFamily>,
+        waddles_gateway: Vec<MetricFamily>,
     }
 
     let golden: GoldenFixture =
@@ -161,7 +170,11 @@ fn metrics_parity() {
         "tobogganing metrics do not match golden fixture"
     );
     assert_eq!(
-        waddlebot_families, golden.waddlebot,
-        "waddlebot metrics do not match golden fixture"
+        waddles_social_families, golden.waddles_social,
+        "waddles-social metrics do not match golden fixture"
+    );
+    assert_eq!(
+        waddles_gateway_families, golden.waddles_gateway,
+        "waddles-gateway metrics do not match golden fixture"
     );
 }
