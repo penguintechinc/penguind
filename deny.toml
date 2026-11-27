@@ -15,10 +15,19 @@ yanked = "deny"
 #   - RUSTSEC-2024-0436 (paste) — cross-platform, via netlink-packet-core ->
 #     defguard_wireguard_rs -> penguin-module-tobogganing (WireGuard networking module);
 #     unrelated to the tray/GTK chain above.
+#   - RUSTSEC-2026-0370 (zvariant) + RUSTSEC-2026-0371 (zbus_names) + RUSTSEC-2026-0372
+#     (zvariant_derive) — standalone crates merged into zbus 6.0; still pulled transitively
+#     by zbus 5.x (ksni, secret-service/keyring, penguin-module-squawk) with no safe upgrade yet.
+#   - RUSTSEC-2026-0543 (chrono) — unmaintained advisory with no drop-in upgrade; pulled
+#     transitively by workspace crates.
 ignore = [
     "RUSTSEC-2024-0370",
     "RUSTSEC-2024-0384",
     "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]

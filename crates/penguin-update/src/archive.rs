@@ -98,7 +98,8 @@ fn extract_from_zip(bytes: &[u8], binary_name: &str) -> Result<Vec<u8>, ArchiveE
             continue;
         }
 
-        let matches = basename_matches(file.name(), binary_name);
+        let entry_name = file.name().map_err(ArchiveError::ZipRead)?;
+        let matches = basename_matches(entry_name.as_ref(), binary_name);
         if !matches {
             continue;
         }
