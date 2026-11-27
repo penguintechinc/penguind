@@ -392,31 +392,29 @@ impl Supervisor {
             .map_err(SupervisorError::Module)
     }
 
-    /// Proxy a user-session HTTP request through the waddlebot module.
-    /// This is a desktop client specific operation — only valid when waddlebot
-    /// is loaded.
+    /// Proxy a user-session HTTP request through the `waddles-social` module.
     pub async fn proxy_request(
         &self,
         module_name: &str,
-        req: penguin_module_waddlebot::session_proxy::HttpRequest,
-    ) -> Result<penguin_module_waddlebot::session_proxy::HttpResponse, SupervisorError> {
-        if module_name != "waddlebot" {
+        req: penguin_module_waddles_social::session_proxy::HttpRequest,
+    ) -> Result<penguin_module_waddles_social::session_proxy::HttpResponse, SupervisorError> {
+        if module_name != "waddles-social" {
             return Err(SupervisorError::UnknownModule(module_name.to_string()));
         }
 
         let shared = self.inner.shared.read().await;
         let _loaded = shared
             .loaded
-            .get("waddlebot")
-            .ok_or_else(|| SupervisorError::NotLoaded("waddlebot".to_string()))?;
+            .get("waddles-social")
+            .ok_or_else(|| SupervisorError::NotLoaded("waddles-social".to_string()))?;
         drop(shared);
 
-        let registry = penguin_module_waddlebot::get_session_proxy_registry();
+        let registry = penguin_module_waddles_social::get_session_proxy_registry();
         let proxy = registry
             .lock()
             .expect("proxy registry poisoned")
             .clone()
-            .ok_or_else(|| SupervisorError::NotLoaded("waddlebot".to_string()))?;
+            .ok_or_else(|| SupervisorError::NotLoaded("waddles-social".to_string()))?;
 
         proxy
             .forward_request(req)
@@ -424,7 +422,7 @@ impl Supervisor {
             .map_err(|e| SupervisorError::Module(ModuleError::new(e.to_string())))
     }
 
-    /// Set the user session on the waddlebot module for hub proxy operations.
+    /// Set the user session on the `waddles-social` module for hub proxy operations.
     pub async fn set_user_session(
         &self,
         module_name: &str,
@@ -432,53 +430,53 @@ impl Supervisor {
         refresh_token: Option<String>,
         hub_base_url: String,
     ) -> Result<(), SupervisorError> {
-        if module_name != "waddlebot" {
+        if module_name != "waddles-social" {
             return Err(SupervisorError::UnknownModule(module_name.to_string()));
         }
 
         let shared = self.inner.shared.read().await;
         let _loaded = shared
             .loaded
-            .get("waddlebot")
-            .ok_or_else(|| SupervisorError::NotLoaded("waddlebot".to_string()))?;
+            .get("waddles-social")
+            .ok_or_else(|| SupervisorError::NotLoaded("waddles-social".to_string()))?;
         drop(shared);
 
-        let registry = penguin_module_waddlebot::get_session_proxy_registry();
+        let registry = penguin_module_waddles_social::get_session_proxy_registry();
         let proxy = registry
             .lock()
             .expect("proxy registry poisoned")
             .clone()
-            .ok_or_else(|| SupervisorError::NotLoaded("waddlebot".to_string()))?;
+            .ok_or_else(|| SupervisorError::NotLoaded("waddles-social".to_string()))?;
 
         proxy
             .set_session(access_token, refresh_token, hub_base_url)
             .map_err(|e| SupervisorError::Module(ModuleError::new(e.to_string())))
     }
 
-    /// Execute a bridge action (OBS command or webhook) through the waddlebot module.
+    /// Execute a bridge action (OBS command or webhook) through the `waddles-gateway` module.
     pub async fn execute_bridge_action(
         &self,
         module_name: &str,
-        req: penguin_module_waddlebot::bridge_action::BridgeActionRequest,
-    ) -> Result<penguin_module_waddlebot::bridge_action::BridgeActionResponse, SupervisorError>
+        req: penguin_module_waddles_gateway::bridge_action::BridgeActionRequest,
+    ) -> Result<penguin_module_waddles_gateway::bridge_action::BridgeActionResponse, SupervisorError>
     {
-        if module_name != "waddlebot" {
+        if module_name != "waddles-gateway" {
             return Err(SupervisorError::UnknownModule(module_name.to_string()));
         }
 
         let shared = self.inner.shared.read().await;
         let _loaded = shared
             .loaded
-            .get("waddlebot")
-            .ok_or_else(|| SupervisorError::NotLoaded("waddlebot".to_string()))?;
+            .get("waddles-gateway")
+            .ok_or_else(|| SupervisorError::NotLoaded("waddles-gateway".to_string()))?;
         drop(shared);
 
-        let registry = penguin_module_waddlebot::get_bridge_action_registry();
+        let registry = penguin_module_waddles_gateway::get_bridge_action_registry();
         let executor = registry
             .lock()
             .expect("bridge action registry poisoned")
             .clone()
-            .ok_or_else(|| SupervisorError::NotLoaded("waddlebot".to_string()))?;
+            .ok_or_else(|| SupervisorError::NotLoaded("waddles-gateway".to_string()))?;
 
         executor
             .execute(req)

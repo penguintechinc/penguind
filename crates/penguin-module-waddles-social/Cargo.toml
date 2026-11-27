@@ -1,0 +1,41 @@
+[package]
+name = "penguin-module-waddles-social"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The Module contract this crate implements, and the hub REST client it wraps.
+penguin-sdk.workspace = true
+waddles-client = { path = "../waddles-client" }
+
+tokio.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+prometheus.workspace = true
+
+serde.workspace = true
+serde-norway.workspace = true
+serde_json.workspace = true
+# Desktop client hub proxy: generic Bearer passthrough + token refresh.
+# Ring-free (rustls) per workspace standards.
+reqwest.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+# Schema-compiles-and-accepts-its-own-defaults tests only; not needed at
+# runtime (the daemon's own `penguin-daemon::config::ConfigStore` is what
+# actually validates a module's config against this schema in production).
+jsonschema.workspace = true
+# Session proxy integration tests: mock hub server for 401->refresh->retry flows.
+wiremock.workspace = true
+# Rustls crypto provider initialization for reqwest client in tests.
+rustls.workspace = true

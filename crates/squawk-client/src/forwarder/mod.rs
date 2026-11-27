@@ -560,11 +560,8 @@ fn convert_answer_to_record(answer: &DnsRecord) -> Option<Record> {
         ));
     }
     if type_str == "TXT" {
-        return Some(Record::from_rdata(
-            owner,
-            ttl,
-            RData::TXT(TXT::new(vec![answer.data.clone()])),
-        ));
+        let txt = TXT::try_new(std::iter::once(answer.data.as_bytes())).ok()?;
+        return Some(Record::from_rdata(owner, ttl, RData::TXT(txt)));
     }
 
     tracing::warn!(

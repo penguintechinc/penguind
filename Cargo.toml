@@ -41,10 +41,10 @@ penguin-daemon = { path = "crates/penguin-daemon" }
 # resolve a builtin OR an external module through one code path.
 penguin-extplugin = { path = "crates/penguin-extplugin" }
 penguin-goplugin-host = { path = "crates/penguin-goplugin-host" }
-# waddlebot: the hub REST client + the built-in module that wraps it (module
-# and its local bridge land in the waddlebot tracks).
-waddlebot-client = { path = "crates/waddlebot-client" }
-penguin-module-waddlebot = { path = "crates/penguin-module-waddlebot" }
+# waddles: shared hub REST client + social desktop client + gateway/OBS bridge.
+waddles-client = { path = "crates/waddles-client" }
+penguin-module-waddles-social = { path = "crates/penguin-module-waddles-social" }
+penguin-module-waddles-gateway = { path = "crates/penguin-module-waddles-gateway" }
 # Built-in modules for M6+ (squawk, tobogganing — Go porting milestones).
 penguin-module-squawk = { path = "crates/penguin-module-squawk" }
 penguin-module-tobogganing = { path = "crates/penguin-module-tobogganing" }
@@ -220,7 +220,7 @@ semver = "1"
 # ships. Go only implemented tar+gzip, silently breaking Windows updates.
 tar = "0.4"
 flate2 = "1"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 # The Windows SCM runtime: penguind.exe must implement a service entry point to
 # run under the SCM at all (WiX only registers it). cfg(windows)-only in the bin.
 windows-service = "0.8"
@@ -253,7 +253,7 @@ urlencoding = "2"
 # DNS message encode/decode for the :53 forwarder. The DoH client itself speaks
 # JSON REST (not RFC 8484 binary), so this is only needed on the local side
 # where we terminate real DNS traffic from the host's resolver.
-hickory-proto = "0.26.1"
+hickory-proto = "0.26.4"
 # systemd-resolved over D-Bus. zbus is pure Rust — no libdbus C dependency.
 # Linux-only; the Go build stubbed this path out entirely and fell back to
 # rewriting /etc/resolv.conf, which fights resolved on any modern distro.

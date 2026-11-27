@@ -192,12 +192,12 @@ mod tests {
     fn sources_are_isolated_from_each_other() {
         let ring = LogRing::new(10);
         ring.append("squawk", line("squawk-line"));
-        ring.append("waddlebot", line("waddlebot-line"));
+        ring.append("waddles-gateway", line("waddles-gateway-line"));
 
         assert_eq!(messages(&ring.backlog("squawk", 10)), vec!["squawk-line"]);
         assert_eq!(
-            messages(&ring.backlog("waddlebot", 10)),
-            vec!["waddlebot-line"]
+            messages(&ring.backlog("waddles-gateway", 10)),
+            vec!["waddles-gateway-line"]
         );
     }
 
