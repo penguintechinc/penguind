@@ -127,15 +127,17 @@ mod tests {
 
         let hooks = document["hooks"].as_array().unwrap();
         assert_eq!(hooks.len(), HOOK_EVENTS.len());
-        assert!(hooks.iter().any(|entry| entry["event"] == "pre-tool-use"));
-        assert!(hooks.iter().any(|entry| entry["event"] == "post-tool-use"));
+        assert!(hooks.iter().any(|entry| entry["event"] == "pre_tool_use"));
+        assert!(hooks.iter().any(|entry| entry["event"] == "post_tool_use"));
+        assert!(hooks.iter().any(|entry| entry["event"] == "session_start"));
+        assert!(hooks.iter().any(|entry| entry["event"] == "notification"));
     }
 
     #[test]
     fn merge_preserves_an_unrelated_existing_entry() {
         let shim = GeminiShim::with_target(PathBuf::new());
         let mut document = json!({
-            "hooks": [{"id": "some-other-tool", "event": "pre-tool-use", "command": "other"}],
+            "hooks": [{"id": "some-other-tool", "event": "pre_tool_use", "command": "other"}],
             "logLevel": "info",
         });
         shim.merge(&mut document);

@@ -31,44 +31,53 @@ pub mod vscode;
 
 mod backup;
 
-/// The hook events every ecosystem shim wires up. WaddleAI's agent-hooks
-/// feature is being built in parallel (see this crate's top-level doc) —
-/// this is the currently-scoped event set (gating a tool call before it
-/// runs, and observing its result after). Adding a finer-grained event
-/// later means adding an entry here and to each ecosystem's own event-name
-/// mapping, not a redesign.
-pub const HOOK_EVENTS: [&str; 2] = ["pre-tool-use", "post-tool-use"];
+/// The hook events every ecosystem shim wires up, matching
+/// `waddleai/services/management/app/api/v1/hooks.py` (`HOOK_EVENTS`).
+pub const HOOK_EVENTS: [&str; 4] = [
+    "pre_tool_use",
+    "post_tool_use",
+    "session_start",
+    "notification",
+];
+
+/// Normalizes a CLI or stdin event name (supporting both canonical
+/// snake_case and legacy hyphenated aliases) to the wire format expected by
+/// WaddleAI (`HOOK_EVENTS`).
+pub fn normalize_event(event: &str) -> Option<&'static str> {
+    match event {
+        "pre_tool_use" | "pre-tool-use" => Some("pre_tool_use"),
+        "post_tool_use" | "post-tool-use" => Some("post_tool_use"),
+        "session_start" | "session-start" => Some("session_start"),
+        "notification" => Some("notification"),
+        _ => None,
+    }
+}
+
+/// Whether `event` is a telemetry-only event routed to
+/// `POST /api/v1/hooks/telemetry` rather than `POST /api/v1/hooks/evaluate`.
+pub fn is_telemetry_event(event: &str) -> bool {
+    matches!(event, "post_tool_use" | "session_start" | "notification")
+}
+
+/// The CLI binary name invoked by installed hook shims.
+pub const CLI_BINARY: &str = "pdcli";
 
 /// The base CLI invocation every shim registers; each ecosystem module
 /// appends one of [`HOOK_EVENTS`]. Matches `crate::commands`'s `hook`
 /// subcommand.
-pub const HOOK_COMMAND: &str = "penguin waddleai hook";
+pub const HOOK_COMMAND: &str = "pdcli waddleai hook";
+
+/// Legacy CLI invocation prior to the `penguin` -> `pdcli` binary rename;
+/// recognized by [`is_hook_command`] so re-installing upgrades old shims
+/// cleanly without duplicating entries.
+const LEGACY_HOOK_COMMAND: &str = "penguin waddleai hook";
 
 /// Builds the shell command a shim actually registers for `event`.
 ///
 /// Wrapped in a `command -v` guard so the hook degrades to a silent no-op
-/// when the `penguin` binary is absent. Hooks run under `/bin/sh`, whose
-/// non-interactive PATH frequently omits `~/.local/bin` and `~/.cargo/bin`,
-/// so "installed" is not the same as "reachable from the hook". Registering
-/// the bare command made every tool call in every Claude Code session -- in
-/// every project, not just this one -- emit a hook error, because these
-/// entries live in the user-global `~/.claude/settings.json`.
-///
-/// This is real enforcement, not telemetry. `exec` hands the shell process
-/// itself over to `{HOOK_COMMAND} {event}` once the probe succeeds, so that
-/// process's own exit code -- `0` for
-/// [`crate::module::HookOutcome::Allow`], nonzero for
-/// [`crate::module::HookOutcome::Deny`] and
-/// [`crate::module::HookOutcome::Unavailable`] alike (see
-/// `crate::commands::hook_command`) -- becomes the exit code the calling
-/// ecosystem observes, which is what actually blocks the tool call. The
-/// trailing `|| true` only ever fires when `command -v penguin` itself
-/// fails, i.e. `exec` never ran: a PATH gap is this shim's own reachability
-/// problem, not a WaddleAI policy decision, so *that* specific case -- and
-/// only that case -- still degrades to a silent allow rather than
-/// masquerading as a `deny`.
+/// when the `pdcli` binary is absent.
 pub fn guarded_hook_command(event: &str) -> String {
-    build_guarded_command("penguin", &format!("{HOOK_COMMAND} {event}"))
+    build_guarded_command(CLI_BINARY, &format!("{HOOK_COMMAND} {event}"))
 }
 
 /// Builds `command -v {probe} >/dev/null 2>&1 && exec {command} || true`.
@@ -81,21 +90,19 @@ fn build_guarded_command(probe: &str, command: &str) -> String {
     format!("command -v {probe} >/dev/null 2>&1 && exec {command} || true")
 }
 
-/// Whether `command` is one this crate registered, in either the bare
-/// (pre-guard) or guarded form.
-///
-/// Matches on substring rather than prefix: the guarded form starts with
-/// `command -v`, so a `starts_with` test would fail to recognise our own
-/// entries and append a duplicate on every install.
+/// Whether `command` is one this crate registered, in either the current
+/// (`pdcli`), legacy (`penguin`), bare, or guarded form.
 pub fn is_hook_command(command: &str) -> bool {
-    command.contains(HOOK_COMMAND)
+    command.contains(HOOK_COMMAND) || command.contains(LEGACY_HOOK_COMMAND)
 }
 
 /// One ecosystem this crate can install a hook shim for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ecosystem {
-    /// Claude Code / Cortex: `~/.claude/settings.json`.
+    /// Claude Code: `~/.claude/settings.json`.
     Claude,
+    /// Cortex: `~/.claude/settings.json`.
+    Cortex,
     /// Google Antigravity / AGY CLI: `~/.gemini/config/hooks.json`.
     Gemini,
     /// VS Code: the user `settings.json`.
@@ -103,30 +110,37 @@ pub enum Ecosystem {
 }
 
 impl Ecosystem {
-    /// The stable, lowercase identifier used for CLI parsing, backup file
-    /// names, and CLI/telemetry labels.
+    /// The canonical WaddleAI wire identifier (`HOOK_ECOSYSTEMS` in
+    /// `waddleai/services/management/app/api/v1/hooks.py`).
     pub fn as_str(self) -> &'static str {
         match self {
-            Ecosystem::Claude => "claude",
-            Ecosystem::Gemini => "gemini",
+            Ecosystem::Claude => "claude-code",
+            Ecosystem::Cortex => "cortex",
+            Ecosystem::Gemini => "antigravity",
             Ecosystem::VsCode => "vscode",
         }
     }
 
-    /// Parses [`Ecosystem::as_str`]'s output back into an [`Ecosystem`];
-    /// unrecognised input is `None`.
+    /// Parses canonical wire names (`claude-code`, `cortex`, `antigravity`,
+    /// `vscode`) as well as legacy CLI aliases (`claude`, `gemini`).
     pub fn parse(value: &str) -> Option<Ecosystem> {
         match value {
-            "claude" => Some(Ecosystem::Claude),
-            "gemini" => Some(Ecosystem::Gemini),
+            "claude-code" | "claude" => Some(Ecosystem::Claude),
+            "cortex" => Some(Ecosystem::Cortex),
+            "antigravity" | "gemini" => Some(Ecosystem::Gemini),
             "vscode" => Some(Ecosystem::VsCode),
             _ => None,
         }
     }
 
     /// Every known ecosystem, in a fixed display order.
-    pub fn all() -> [Ecosystem; 3] {
-        [Ecosystem::Claude, Ecosystem::Gemini, Ecosystem::VsCode]
+    pub fn all() -> [Ecosystem; 4] {
+        [
+            Ecosystem::Claude,
+            Ecosystem::Cortex,
+            Ecosystem::Gemini,
+            Ecosystem::VsCode,
+        ]
     }
 }
 
@@ -364,11 +378,25 @@ mod tests {
     }
 
     #[test]
-    fn ecosystem_round_trips_through_its_string() {
+    fn ecosystem_round_trips_and_accepts_legacy_aliases() {
         for eco in Ecosystem::all() {
             assert_eq!(Ecosystem::parse(eco.as_str()), Some(eco));
         }
+        assert_eq!(Ecosystem::parse("claude"), Some(Ecosystem::Claude));
+        assert_eq!(Ecosystem::parse("gemini"), Some(Ecosystem::Gemini));
         assert_eq!(Ecosystem::parse("bogus"), None);
+    }
+
+    #[test]
+    fn normalize_event_accepts_canonical_and_hyphenated_aliases() {
+        assert_eq!(normalize_event("pre_tool_use"), Some("pre_tool_use"));
+        assert_eq!(normalize_event("pre-tool-use"), Some("pre_tool_use"));
+        assert_eq!(normalize_event("post_tool_use"), Some("post_tool_use"));
+        assert_eq!(normalize_event("post-tool-use"), Some("post_tool_use"));
+        assert_eq!(normalize_event("session_start"), Some("session_start"));
+        assert_eq!(normalize_event("session-start"), Some("session_start"));
+        assert_eq!(normalize_event("notification"), Some("notification"));
+        assert_eq!(normalize_event("unknown"), None);
     }
 
     /// The whole point of [`guarded_hook_command`]'s `exec` (see its doc):

@@ -12,9 +12,9 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::{WaddleAiError, parse_error_body};
 
@@ -87,32 +87,72 @@ pub struct HealthResponse {
 }
 
 /// One synced Tier-1 denylist snapshot, as returned by
-/// [`WaddleAiClient::fetch_denylist`].
+/// [`WaddleAiClient::fetch_denylist`] (`GET /api/v1/hooks/policy`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DenylistResponse {
-    /// An opaque version/etag the server assigns to this snapshot, stored
-    /// alongside the entries in [`crate::cache::DenylistCache`] purely for
-    /// display — this client never diffs against it.
+    /// The denylist patterns themselves, verbatim from the server.
     #[serde(default)]
-    pub version: String,
-    /// The denylist entries themselves, verbatim. Never interpreted by this
-    /// crate as anything but opaque strings to persist and later
-    /// exact-match against — see [`crate::cache::DenylistCache::contains`].
+    pub denylist_patterns: Vec<String>,
+    /// Server-reported RFC3339 timestamp for this snapshot, stored in
+    /// [`crate::cache::DenylistCache::version`] for display.
     #[serde(default)]
-    pub entries: Vec<String>,
+    pub updated_at: String,
+}
+
+/// Request body for `POST /api/v1/hooks/evaluate` (§18.1).
+#[derive(Debug, Clone, Serialize)]
+pub struct EvaluateRequest {
+    pub hook_version: &'static str,
+    pub ecosystem: String,
+    pub event: String,
+    pub tool_name: String,
+    pub tool_input: Value,
+    pub session_id: String,
+    pub workspace_path: Option<String>,
+    pub occurred_at: String,
 }
 
 /// WaddleAI's decision for one forwarded hook event, as returned by
-/// [`WaddleAiClient::evaluate_hook_event`].
+/// [`WaddleAiClient::evaluate_hook_event`] (`POST /api/v1/hooks/evaluate`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvaluateResponse {
-    /// `"allow"` or `"deny"` — read as an opaque string
-    /// (`crate::commands::hook_command` matches on it), never branched on
-    /// with any additional local logic.
+    /// `"allow"`, `"deny"`, `"ask"`, or `"redirect"`.
     pub decision: String,
-    /// A human-readable reason, surfaced verbatim to the caller/editor.
+    /// A human-readable reason (nullable in §18.2), surfaced to the caller.
     #[serde(default)]
-    pub reason: String,
+    pub reason: Option<String>,
+    /// Optional matched rule identifier from the server.
+    #[serde(default)]
+    pub rule_id: Option<Value>,
+    /// Server-side evaluation duration in milliseconds.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub evaluated_in_ms: u64,
+    /// Optional target model when `decision == "redirect"`.
+    #[serde(default)]
+    pub redirect_model: Option<String>,
+    /// Optional active skills list when `decision == "redirect"`.
+    #[serde(default)]
+    pub active_skills: Option<Vec<String>>,
+}
+
+/// Request body for `POST /api/v1/hooks/telemetry` (§18.1).
+#[derive(Debug, Clone, Serialize)]
+pub struct TelemetryRequest {
+    pub ecosystem: String,
+    pub event: String,
+    pub tool_name: String,
+    pub session_id: String,
+    pub tool_input: Value,
+    pub occurred_at: String,
+}
+
+/// Response body for `POST /api/v1/hooks/telemetry`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TelemetryResponse {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub accepted: bool,
 }
 
 /// An async client for the WaddleAI agent-hooks API. Holds its own
@@ -144,6 +184,17 @@ impl WaddleAiClient {
 
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base_url)
+    }
+
+    /// Derives the root `/healthz` URL from `base_url` by stripping a trailing
+    /// `/api/v1` prefix if present (`https://waddleai.app/api/v1` ->
+    /// `https://waddleai.app/healthz`).
+    fn healthz_url(&self) -> String {
+        let root = self
+            .base_url
+            .strip_suffix("/api/v1")
+            .unwrap_or(&self.base_url);
+        format!("{root}/healthz")
     }
 
     /// Sends `builder`, adding the `Authorization: Bearer <virtual_key>`
@@ -185,34 +236,32 @@ impl WaddleAiClient {
         })
     }
 
-    /// A cheap liveness/auth probe: `GET /health` — the least destructive
-    /// authenticated call this surface has.
+    /// A cheap liveness/auth probe: `GET /healthz` at the server root.
     pub async fn health(&self) -> Result<HealthResponse, WaddleAiError> {
-        self.execute(self.http.get(self.url("/health"))).await
+        self.execute(self.http.get(self.healthz_url())).await
     }
 
-    /// Fetches the current Tier-1 denylist snapshot.
+    /// Fetches the canonical Tier-1 denylist snapshot (`GET /api/v1/hooks/policy`).
     pub async fn fetch_denylist(&self) -> Result<DenylistResponse, WaddleAiError> {
-        self.execute(self.http.get(self.url("/agent-hooks/denylist")))
+        self.execute(self.http.get(self.url("/hooks/policy"))).await
+    }
+
+    /// Forwards one normalized hook event to `POST /api/v1/hooks/evaluate`
+    /// and returns WaddleAI's decision.
+    pub async fn evaluate_hook_event(
+        &self,
+        request: &EvaluateRequest,
+    ) -> Result<EvaluateResponse, WaddleAiError> {
+        self.execute(self.http.post(self.url("/hooks/evaluate")).json(request))
             .await
     }
 
-    /// Forwards one normalized hook event and returns WaddleAI's decision.
-    /// `payload` is passed through verbatim from whatever ecosystem-specific
-    /// shim produced it (see [`crate::hooks`]) — this client never inspects
-    /// its shape.
-    pub async fn evaluate_hook_event(
+    /// Sends a fire-and-forget telemetry event to `POST /api/v1/hooks/telemetry`.
+    pub async fn send_telemetry(
         &self,
-        ecosystem: &str,
-        event: &str,
-        payload: &Value,
-    ) -> Result<EvaluateResponse, WaddleAiError> {
-        let body = json!({
-            "ecosystem": ecosystem,
-            "event": event,
-            "payload": payload,
-        });
-        self.execute(self.http.post(self.url("/agent-hooks/events")).json(&body))
+        request: &TelemetryRequest,
+    ) -> Result<TelemetryResponse, WaddleAiError> {
+        self.execute(self.http.post(self.url("/hooks/telemetry")).json(request))
             .await
     }
 }
@@ -249,13 +298,30 @@ mod tests {
         assert!(rendered.contains("****lkey"));
     }
 
+    #[test]
+    fn healthz_url_strips_api_v1_suffix_when_present() {
+        let with_v1 = WaddleAiClient::new(Config {
+            base_url: "https://waddleai.app/api/v1/".to_string(),
+            ..Config::default()
+        })
+        .expect("build client");
+        assert_eq!(with_v1.healthz_url(), "https://waddleai.app/healthz");
+
+        let bare = WaddleAiClient::new(Config {
+            base_url: "http://127.0.0.1:8080".to_string(),
+            ..Config::default()
+        })
+        .expect("build client");
+        assert_eq!(bare.healthz_url(), "http://127.0.0.1:8080/healthz");
+    }
+
     #[tokio::test]
     async fn health_sends_the_bearer_token_and_decodes_status() {
         let server = MockServer::start().await;
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(200, r#"{"status":"ok"}"#),
             )
             .await;
@@ -279,7 +345,7 @@ mod tests {
         server
             .respond(
                 "GET",
-                "/health",
+                "/healthz",
                 MockResponse::json(401, r#"{"error":"invalid virtual key"}"#),
             )
             .await;
@@ -292,48 +358,106 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_denylist_decodes_version_and_entries() {
+    async fn fetch_denylist_decodes_patterns_and_updated_at() {
         let server = MockServer::start().await;
         server
             .respond(
                 "GET",
-                "/agent-hooks/denylist",
-                MockResponse::json(200, r#"{"version":"7","entries":["rm -rf /","curl | sh"]}"#),
+                "/hooks/policy",
+                MockResponse::json(
+                    200,
+                    r#"{"denylist_patterns":[".env*",".git/**"],"updated_at":"2026-11-27T00:00:00Z"}"#,
+                ),
             )
             .await;
         let client = WaddleAiClient::new(config_for(&server)).expect("build client");
 
         let snapshot = client.fetch_denylist().await.expect("fetch succeeds");
-        assert_eq!(snapshot.version, "7");
-        assert_eq!(snapshot.entries, vec!["rm -rf /", "curl | sh"]);
+        assert_eq!(snapshot.updated_at, "2026-11-27T00:00:00Z");
+        assert_eq!(snapshot.denylist_patterns, vec![".env*", ".git/**"]);
 
         server.stop().await;
     }
 
     #[tokio::test]
-    async fn evaluate_hook_event_sends_the_normalized_envelope() {
+    async fn evaluate_hook_event_sends_v1_contract_and_decodes_null_reason_and_redirect() {
         let server = MockServer::start().await;
         server
             .respond(
                 "POST",
-                "/agent-hooks/events",
-                MockResponse::json(200, r#"{"decision":"allow","reason":"ok"}"#),
+                "/hooks/evaluate",
+                MockResponse::json(
+                    200,
+                    r#"{"decision":"redirect","reason":null,"rule_id":"r-1","evaluated_in_ms":4,"redirect_model":"qwen2.5:7b","active_skills":["git-ops"]}"#,
+                ),
             )
             .await;
         let client = WaddleAiClient::new(config_for(&server)).expect("build client");
 
-        let payload = json!({"tool": "bash", "command": "ls"});
+        let req = EvaluateRequest {
+            hook_version: "1",
+            ecosystem: "claude-code".to_string(),
+            event: "pre_tool_use".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "git status"}),
+            session_id: "sess-1".to_string(),
+            workspace_path: Some("/repo".to_string()),
+            occurred_at: "2026-11-27T00:00:00Z".to_string(),
+        };
         let decision = client
-            .evaluate_hook_event("claude", "pre-tool-use", &payload)
+            .evaluate_hook_event(&req)
             .await
             .expect("evaluate succeeds");
-        assert_eq!(decision.decision, "allow");
+        assert_eq!(decision.decision, "redirect");
+        assert_eq!(decision.reason, None);
+        assert_eq!(decision.redirect_model.as_deref(), Some("qwen2.5:7b"));
+        assert_eq!(
+            decision.active_skills.as_deref(),
+            Some(&["git-ops".to_string()][..])
+        );
 
         let requests = server.requests().await;
         let body = requests[0].json_body();
-        assert_eq!(body["ecosystem"], "claude");
-        assert_eq!(body["event"], "pre-tool-use");
-        assert_eq!(body["payload"]["tool"], "bash");
+        assert_eq!(body["hook_version"], "1");
+        assert_eq!(body["ecosystem"], "claude-code");
+        assert_eq!(body["event"], "pre_tool_use");
+        assert_eq!(body["tool_name"], "Bash");
+        assert_eq!(body["tool_input"]["command"], "git status");
+
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn send_telemetry_posts_to_hooks_telemetry_and_decodes_202() {
+        let server = MockServer::start().await;
+        server
+            .respond(
+                "POST",
+                "/hooks/telemetry",
+                MockResponse::json(202, r#"{"accepted":true}"#),
+            )
+            .await;
+        let client = WaddleAiClient::new(config_for(&server)).expect("build client");
+
+        let req = TelemetryRequest {
+            ecosystem: "antigravity".to_string(),
+            event: "post_tool_use".to_string(),
+            tool_name: "Read".to_string(),
+            session_id: "sess-2".to_string(),
+            tool_input: serde_json::json!({"file_path": "README.md"}),
+            occurred_at: "2026-11-27T00:00:00Z".to_string(),
+        };
+        let resp = client
+            .send_telemetry(&req)
+            .await
+            .expect("telemetry succeeds");
+        assert!(resp.accepted);
+
+        let requests = server.requests().await;
+        let body = requests[0].json_body();
+        assert_eq!(body["ecosystem"], "antigravity");
+        assert_eq!(body["event"], "post_tool_use");
+        assert_eq!(body["tool_name"], "Read");
 
         server.stop().await;
     }

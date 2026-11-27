@@ -16,15 +16,14 @@ use serde_json::{Map, Value, json};
 
 use super::{Ecosystem, HOOK_EVENTS, Shim, ShimError, guarded_hook_command, is_hook_command};
 
-/// Maps this crate's internal event id (shared across ecosystems, see
-/// [`super::HOOK_EVENTS`]) to Claude Code's own `PascalCase` event name.
+/// Maps this crate's canonical event id (`super::HOOK_EVENTS`) to Claude
+/// Code's own `PascalCase` event name.
 fn claude_event_name(event: &str) -> &'static str {
     match event {
-        "pre-tool-use" => "PreToolUse",
-        "post-tool-use" => "PostToolUse",
-        // `super::HOOK_EVENTS` is the only caller of this function and is a
-        // fixed, crate-internal constant covering exactly these two cases —
-        // provably unreachable rather than a real runtime condition.
+        "pre_tool_use" => "PreToolUse",
+        "post_tool_use" => "PostToolUse",
+        "session_start" => "SessionStart",
+        "notification" => "Notification",
         other => {
             unreachable!("unknown hook event {other:?}; HOOK_EVENTS drifted from claude_event_name")
         }
@@ -163,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_adds_both_events_to_an_empty_document() {
+    fn merge_adds_all_events_to_an_empty_document() {
         let shim = ClaudeShim::with_target(PathBuf::new());
         let mut document = json!({});
         shim.merge(&mut document);
@@ -172,26 +171,31 @@ mod tests {
         assert_eq!(pre[0]["matcher"], "*");
         assert_eq!(
             pre[0]["hooks"][0]["command"],
-            guarded_hook_command("pre-tool-use")
+            guarded_hook_command("pre_tool_use")
         );
         let post = &document["hooks"]["PostToolUse"];
         assert_eq!(
             post[0]["hooks"][0]["command"],
-            guarded_hook_command("post-tool-use")
+            guarded_hook_command("post_tool_use")
+        );
+        let session = &document["hooks"]["SessionStart"];
+        assert_eq!(
+            session[0]["hooks"][0]["command"],
+            guarded_hook_command("session_start")
+        );
+        let notif = &document["hooks"]["Notification"];
+        assert_eq!(
+            notif[0]["hooks"][0]["command"],
+            guarded_hook_command("notification")
         );
     }
 
     #[test]
-    fn registered_command_is_guarded_so_a_missing_binary_is_a_no_op() {
-        // Regression: the shim used to register the bare `penguin waddleai
-        // hook <event>`. These entries land in the user-global
-        // ~/.claude/settings.json, so when the binary was absent -- or merely
-        // not on /bin/sh's non-interactive PATH -- EVERY tool call in EVERY
-        // Claude Code session, across all projects, emitted a hook error.
-        let command = guarded_hook_command("pre-tool-use");
+    fn registered_command_is_guarded_with_pdcli_so_a_missing_binary_is_a_no_op() {
+        let command = guarded_hook_command("pre_tool_use");
         assert!(
-            command.starts_with("command -v penguin >/dev/null 2>&1 &&"),
-            "must probe for the binary before invoking it: {command}"
+            command.starts_with("command -v pdcli >/dev/null 2>&1 &&"),
+            "must probe for pdcli before invoking it: {command}"
         );
         assert!(
             command.ends_with("|| true"),
@@ -202,10 +206,8 @@ mod tests {
 
     #[test]
     fn merge_upgrades_a_legacy_unguarded_entry_instead_of_duplicating_it() {
-        // Anyone who installed before the guard landed has the bare command
-        // sitting in their settings.json. Detection matches on substring, so
-        // that entry is recognised as ours and replaced -- not left in place
-        // (still erroring) beside a second, guarded copy.
+        // Anyone who installed before the guard / pdcli rename landed has
+        // the bare `penguin waddleai hook` command sitting in settings.json.
         let shim = ClaudeShim::with_target(PathBuf::new());
         let mut document = json!({
             "hooks": {
@@ -226,7 +228,7 @@ mod tests {
         );
         assert_eq!(
             pre[0]["hooks"][0]["command"],
-            guarded_hook_command("pre-tool-use")
+            guarded_hook_command("pre_tool_use")
         );
     }
 
